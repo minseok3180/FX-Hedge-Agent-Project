@@ -1,0 +1,58 @@
+nohup: ignoring input
+✅ 모든 모듈 import 성공
+🚀 환 리스크 헷지 강화학습 에이전트 시작!
+📋 실행 모드: test
+🔧 환경 설정 중...
+✅ 환경 설정 완료
+   출력 디렉토리: /workspace/kb_project/notebook/minseok/results
+   모델 디렉토리: /workspace/kb_project/notebook/minseok/models
+   통합 데이터 디렉토리: /workspace/kb_project/notebook/minseok/integrated_data
+
+============================================================
+🧪 테스트 모드 실행
+============================================================
+📦 모듈 임포트 테스트...
+✅ 모든 모듈 임포트 성공
+
+📊 데이터 통합 테스트...
+📁 데이터 통합 시작
+   yonju 데이터: /workspace/kb_project/notebook/yonju/df.csv
+   chaewon 예측: /workspace/kb_project/notebook/chaewon/target_trial.csv
+   출력 디렉토리: /workspace/kb_project/notebook/minseok/integrated_data
+🔗 데이터 통합 중...
+📊 yonju 데이터 로드 중...
+✅ yonju 데이터 로드 완료: 2008행, 15컬럼
+🔮 chaewon 예측 결과 로드 중...
+✅ chaewon 예측 결과 로드 완료: 31행
+📅 yonju 데이터 기간: 2020-01-01 ~ 2025-06-30
+📅 chaewon 예측 기간: 2025-01-01 ~ 2025-01-31
+✅ 데이터 통합 완료: 2008행, 16컬럼
+🎯 강화학습용 훈련 데이터 생성 중...
+📊 데이터 품질 검사:
+   전체 행 수: 2008
+   결측값 개수: 0
+   중복 행 수: 0
+   결측값 제거 후 행 수: 2008
+   데이터 기간: 2007일
+✅ 데이터 통합 테스트 성공: 2008행
+
+🌍 환경 생성 테스트...
+✅ 데이터 로드 완료: 2008행, 16컬럼
+✅ 환경 생성 테스트 성공
+
+🤖 에이전트 생성 테스트...
+🚀 디바이스: cuda
+✅ 에이전트 생성 테스트 성공
+
+🎯 간단한 학습 테스트...
+   에피소드 1: 보상 -259.12, 길이 5
+   에피소드 2: 보상 -187.08, 길이 5
+✅ 간단한 학습 테스트 성공
+
+🎉 모든 테스트가 성공적으로 완료되었습니다!
+
+✅ 테스트가 성공적으로 완료되었습니다!
+이제 다른 모드로 실행할 수 있습니다:
+  python main.py --mode data      # 데이터 통합만
+  python main.py --mode train     # 학습만
+  python main.py --mode all        # 전체 파이프라인

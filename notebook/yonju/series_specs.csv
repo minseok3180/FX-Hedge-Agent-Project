@@ -1,0 +1,23 @@
+stat_code,cycle,item_code,name
+731Y001,D,,usdkrw(target)
+901Y011,M,미국,us_ex
+901Y012,M,미국,us_im
+732Y001,M,,reserve
+902Y014,M,미국,us_reserve
+902Y012,M,미국,us_export
+902Y013,M,미국,us_import
+722Y001,D,,base
+817Y002,D,,market
+901Y009,M,*AA,consumer
+402Y014,M,*AA,exp_rate
+401Y015,M,*AA,im_rate
+902Y002,Q,미국,us_current
+902Y015,Q,미국,us_growth
+902Y016,A,미국,us_gdp
+902Y002,M,미국,us_stock
+902Y023,Q,미국,us_interest
+
+
+# item_code 비우면 자동 선택
+# name 비우면 자동으로 value_<stat_code>로 컬럼명 지정.
+# 주기 표기: D(일), M(월), Q(분기), A(연).
