@@ -1,11 +1,17 @@
-## Kick-off
--  KT 공모전은 9/10 10:00 종료
+# 0820 kick-off meeting
+##  Project Goal
+- K intelligence 해커톤 2025 (Track1: AI Agent 개발) 참가 (due to 9/10 09:59)
+- 주제 : FX Hedge Agent 
 
-1. 가능한 시간 수합
-2. 이전 주제 : FX Hedge Agent -> 믿:음 LLM적용으로 어떻게 수정 할 것인가...
-  - 믿:음을 어떻게 사용할 것인가.  
-3. 공모전 마감 이후 사이드 프로젝트로 어떻게 진행할건지 detail정의
-  - MLOps로 데이터 관리 및 모니터링 어떻게 할 것인지
-  - role을 어떻게 설정할지 -> LLM, TSForecasting, RL Agent, MLOps 4개?
-  - 단기 목표 및 회의계획
-    
+##  Detail
+- HedgeAgents: A Balanced-aware Multi-agent Financial Trading System (https://arxiv.org/html/2502.13165v1)의 아이디어를 backbone삼아 구현
+- KT의 믿:음을 LLM agent로 사용
+- 데이터 및 추론 도메인은 '환율(FX)에 대한 Hedge 전략'으로 제한
+- 환율에 대한 time-series forecasting model을 서브로 구현하여 예측환율 정보까지 RAG형식으로 적용하는 것을 시도
+  (이에 대한 추가 논문 및 모델 논의 필요 / 적용 가능 및 개선 유무 정도...)
+- B2B/B2G 환경에서 현업에 도움되는 방식으로 output 설정 (ex. chatbot)
+
+## To-do
+- meeting : 09/24(일) 14:00~16:00 예정(비대면)
+- 기반이 되는 논문 스터디 및 적용 계획 확인
+- backbone code 작성
