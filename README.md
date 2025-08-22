@@ -4,7 +4,7 @@
 - 주제 : FX Hedge Agent 
 
 ##  Detail
-- HedgeAgents: A Balanced-aware Multi-agent Financial Trading System (https://arxiv.org/html/2502.13165v1)의 아이디어를 backbone삼아 구현
+- HedgeAgents: A Balanced-aware Multi-agent Financial Trading System ( https://arxiv.org/html/2502.13165v1 )의 아이디어를 backbone삼아 구현
 - KT의 믿:음을 LLM agent로 사용
 - 데이터 및 추론 도메인은 '환율(FX)에 대한 Hedge 전략'으로 제한
 - 환율에 대한 time-series forecasting model을 서브로 구현하여 예측환율 정보까지 RAG형식으로 적용하는 것을 시도
