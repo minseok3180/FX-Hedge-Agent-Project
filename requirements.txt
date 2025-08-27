@@ -1,3 +1,15 @@
+transformers>=4.41.0
+torch>=2.2.0
+accelerate>=0.28.0
+sentence-transformers>=2.7.0
+langchain>=0.2.0
+langchain-community>=0.2.0
+langgraph>=0.2.0
+chromadb>=0.5.0
+duckduckgo-search>=6.2.0
+yfinance>=0.2.40
+streamlit>=1.36.0
+pandas>=2.2.2
 # KT 믿음 mini 모델 관련
 transformers>=4.35.0,<5.0.0
 torch>=2.0.0,<3.0.0
