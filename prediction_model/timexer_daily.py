@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-USD/KRW daily forecasting (full script, daily-only exog)
-- Target: lr_resid = lr - EMA(lr, span=10)  → 표준화 후 학습
-- Restore: lr̂ = EMA_pred + lr̂_resid  (EMA는 예측 중 갱신)
-- Model: LSTM(endo/exo) + cross-attn(T-length) + MLP + linear AR head (lags=15, gain=0.6)
-- Train: multi-step teacher forcing, 외생 '최근 7일 반복' 정책(훈련=예측)
-- Loss: Huber + 방향성(sign) + 누적 경로(trend) + 기울기(slope) + 약한 drift penalty
-- Features: 일별 기술지표(momentum/vol on resid, level z-score/RSI), weekday/eom sin/cos
-- Inference: resid 분위수 클램프(1~99%) + 완만한 shrinkage(τ=14); y = y * exp(lr̂) 누적
-- 변경 사항: 월/연 저빈도 외생변수 전부 제거. 일별 데이터만 사용.
+USD/KRW daily forecasting — TimeXer(LR target) + 급등 추종성 강화 패치 통합본
+- Target: lr = log(y_t / y_{t-1}) → 표준화(r_std) 후 학습
+- Restore: y_t = y_{t-1} * exp(lr_hat)
+- Model: LSTM(endo/exo) + cross-attn + MLP + linear AR head(lags=15, gain=0.90)
+- Train: policy-aligned multi-step Teacher Forcing, 추가 손실(trend/slope/sign/drift, 완화)
+- Exog: lr_ema10, 캘린더(dow_sin, dow_cos, eom), 기술지표(확장), + r_std 래그(15개)
+- Inference:
+    1) 동적 클램프(최근 120일, 0.5~99.5%)
+    2) biweekly_repeat(최근 14일 반복) 외생
+    3) 진폭 캘리브레이션(학습 꼬리 std 비율) 후 복원
 """
 
 import warnings, numpy as np, pandas as pd
-from typing import List, Tuple
+from typing import List
 warnings.filterwarnings('ignore')
 
 import torch
@@ -26,17 +27,21 @@ import matplotlib.pyplot as plt
 plt.rcParams['font.family'] = 'DejaVu Sans'
 plt.rcParams['axes.unicode_minus'] = False
 
+
 # ========================== utils ==========================
 def validate_dataframe(df: pd.DataFrame, name: str, cols: list):
     bad = {}
     for c in cols:
-        if c not in df.columns: continue
+        if c not in df.columns:
+            continue
         s = df[c]
         n_nan = int(s.isna().sum()); n_inf = int(np.isinf(s).sum())
-        if n_nan or n_inf: bad[c] = (n_nan, n_inf)
+        if n_nan or n_inf:
+            bad[c] = (n_nan, n_inf)
     if bad:
         print(f"[검증 경고] {name}에 비정상 값:")
-        for c,(nn,ni) in bad.items(): print(f"  - {c}: NaN={nn}, Inf={ni}")
+        for c,(nn,ni) in bad.items():
+            print(f"  - {c}: NaN={nn}, Inf={ni}")
     else:
         print(f"[검증 OK] {name}: NaN/Inf 없음")
 
@@ -53,10 +58,11 @@ def check_array_finite(name: str, arr: np.ndarray):
     n = arr.size; n_nan=int(np.isnan(arr).sum()); n_inf=int(np.isinf(arr).sum())
     print(f"[배열검증] {name}: shape={arr.shape}, NaN={n_nan}, Inf={n_inf}, valid={(n-n_nan-n_inf)}/{n}")
 
+
 # ========================== model ==========================
 class SimpleTimeXerModel(nn.Module):
-    def __init__(self, endogenous_dim=1, exogenous_dim=5, hidden_size=128, num_layers=2,
-                 ar_lags=15, ar_gain=0.60):
+    def __init__(self, endogenous_dim=1, exogenous_dim=5, hidden_size=192, num_layers=2,
+                 ar_lags=15, ar_gain=0.90):
         super().__init__()
         self.ar_lags = ar_lags
         self.ar_gain = ar_gain
@@ -72,7 +78,7 @@ class SimpleTimeXerModel(nn.Module):
 
         self.output_layer = nn.Sequential(
             nn.Linear(hidden_size*2, hidden_size), nn.ReLU(), nn.Dropout(0.1),
-            nn.Linear(hidden_size, 1)   # neural 1-step r_std (resid)
+            nn.Linear(hidden_size, 1)   # neural 1-step r_std (lr)
         )
         self.ar_head = nn.Linear(ar_lags, 1, bias=True)  # linear AR head on r_std window
 
@@ -82,25 +88,22 @@ class SimpleTimeXerModel(nn.Module):
         end_out,_ = self.endogenous_lstm(endogenous_x)   # [B,T,H]
         exo_out,_ = self.exogenous_lstm(exogenous_x)     # [B,T,H]
 
-        # 쿼리는 end_out의 마지막 스텝, 키/밸류는 exo_out의 전체 타임스텝
         query = end_out[:, -1:, :]                       # [B,1,H]
-        key   = exo_out                                  # [B,T,H]
-        value = exo_out                                  # [B,T,H]
-        attn_out,_ = self.cross_attention(query=query, key=key, value=value)  # [B,1,H]
+        attn_out,_ = self.cross_attention(query=query, key=exo_out, value=exo_out)  # [B,1,H]
         attn_out = attn_out.squeeze(1)                   # [B,H]
 
         global_rep = self.global_token.repeat(B,1)       # [B,H]
         neural = self.output_layer(torch.cat([attn_out, global_rep], dim=1))  # [B,1]
 
-        # AR head on last lags of endogenous (already standardized resid in input)
         l = min(self.ar_lags, T)
-        ar_in = endogenous_x[:, -l:, 0]                  # [B, l]
+        ar_in = endogenous_x[:, -l:, 0]
         if l < self.ar_lags:
             pad = torch.zeros((B, self.ar_lags - l), device=endogenous_x.device, dtype=endogenous_x.dtype)
             ar_in = torch.cat([pad, ar_in], dim=1)
         ar = self.ar_head(ar_in)                         # [B,1]
 
         return neural + self.ar_gain * ar
+
 
 # ========================== technicals ==========================
 def rsi(series: pd.Series, period: int = 14):
@@ -111,6 +114,7 @@ def rsi(series: pd.Series, period: int = 14):
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(50.0)
 
+
 # ========================== data load / preprocess (DAILY-ONLY) ==========================
 def load_and_preprocess_data():
     print("데이터 로드 중...")
@@ -120,7 +124,7 @@ def load_and_preprocess_data():
     df_target = pd.read_csv('df_target.csv'); df_target['date']=pd.to_datetime(df_target['date'])
     df_target = df_target.sort_values('date').reset_index(drop=True)
 
-    # 월별/연별 저빈도 외생변수 제거(완전 삭제. 사실상 market 제외하고 모두 지움.)
+    # 저빈도 외생 제거(존재시)
     drop_if_exists=['base','us_current','us_growth','us_interest',
                     'us_ex','us_im','reserve','us_reserve','us_export','us_import',
                     'us_gdp','consumer','exp_rate','im_rate','us_stock','dir_inv','us_indpro','us_unemp','us_prod']
@@ -129,83 +133,92 @@ def load_and_preprocess_data():
         df_train=df_train.drop(columns=drop_real)
         df_target=df_target.drop(columns=[c for c in drop_real if c in df_target.columns], errors='ignore')
 
-    # 일별 동적 변수만 사용(존재하는 컬럼만 채택)
+    # 일별 동적 변수만 사용(존재하는 컬럼만)
     dynamic_columns=[c for c in ['market'] if c in df_train.columns]
 
     target_col='usdkrw(target)'
-
-    # --- log-return + EMA 잔차 타깃 ---
     y = df_train[target_col].astype(float)
+
+    # --- log-return 타깃 ---
     lr = np.log(y / y.shift(1)).replace([np.inf,-np.inf], np.nan).fillna(0.0)
+    df_train['lr'] = lr
+    df_train['lr_ema10'] = lr.ewm(span=10, adjust=False).mean()
 
-    ema10 = pd.Series(lr).ewm(span=10, adjust=False).mean().values
-    df_train['lr_ema10'] = ema10
-    df_train['lr_resid'] = lr - ema10  # 학습 타깃(비정상성 완화)
-
-    # momentum/vol은 resid 기준 (일별)
-    r = df_train['lr_resid']
-    df_train['r_ma3']   = r.rolling(3).mean()
-    df_train['r_ma5']   = r.rolling(5).mean()
-    df_train['r_ma10']  = r.rolling(10).mean()
-    df_train['r_vol10'] = r.rolling(10).std()
-
-    # level-based reversal (일별)
+    # 기술지표(레벨/수익률 혼합) — 확장
     ma20 = y.rolling(20).mean(); std20 = y.rolling(20).std()
     df_train['lvl_z20']   = (y - ma20) / (std20 + 1e-12)
-    df_train['lvl_rsi14'] = rsi(y, 14) / 100.0  # 0~1
+    df_train['lvl_rsi14'] = rsi(y, 14) / 100.0
+    df_train['lr_ma5']    = lr.rolling(5).mean()
+    df_train['lr_ma10']   = lr.rolling(10).mean()
+    df_train['lr_vol10']  = lr.rolling(10).std()
 
-    tech_cols=['r_ma3','r_ma5','r_ma10','r_vol10','lvl_z20','lvl_rsi14']
+    # 추가 파생(변동성/모멘텀 민감도 ↑)
+    df_train['lr_ema3']  = lr.ewm(span=3,  adjust=False).mean()
+    df_train['lr_vol20'] = lr.rolling(20).std()
+    df_train['lvl_mom5'] = (y / y.shift(5) - 1.0)
+    df_train['lvl_z60']  = (y - y.rolling(60).mean()) / (y.rolling(60).std() + 1e-12)
 
-    # calendar (일별)
+    tech_cols=['lvl_z20','lvl_rsi14','lr_ma5','lr_ma10','lr_vol10','lr_ema3','lr_vol20','lvl_mom5','lvl_z60']
+
+    # calendar
     df_train['dow']     = df_train['date'].dt.weekday
     df_train['eom']     = (df_train['date'].dt.is_month_end).astype(int)
     df_train['dow_sin'] = np.sin(2*np.pi*df_train['dow']/7)
     df_train['dow_cos'] = np.cos(2*np.pi*df_train['dow']/7)
 
-    base_cols = [target_col,'lr_resid','lr_ema10','dow_sin','dow_cos','eom'] + dynamic_columns + tech_cols
+    base_cols = [target_col,'lr','lr_ema10','dow_sin','dow_cos','eom'] + dynamic_columns + tech_cols
     validate_dataframe(df_train, "파생 후(원본, 일별만)", base_cols)
     df_train = clean_infinite_and_nan(df_train, base_cols, mode="ffill_bfill_then_zero")
 
-    # scalers
-    return_scaler = StandardScaler()       # lr_resid 전용
-    exogenous_scaler = StandardScaler()
+    # 스케일러
+    return_scaler   = StandardScaler()     # lr 전용
+    exogenous_scaler= StandardScaler()
 
-    exog_cols = dynamic_columns + ['dow_sin','dow_cos','eom'] + tech_cols
+    # r_std 생성(타깃)
+    r_std = return_scaler.fit_transform(df_train[['lr']]).ravel()
+    df_train_scaled = pd.DataFrame({'r_std': r_std})
+
+    # exog 스케일
+    exog_cols_core = dynamic_columns + ['lr_ema10','dow_sin','dow_cos','eom'] + tech_cols
     exog_scaled = pd.DataFrame(index=df_train.index)
-    if exog_cols:
-        exog_scaled[exog_cols] = exogenous_scaler.fit_transform(df_train[exog_cols])
+    if exog_cols_core:
+        exog_scaled[exog_cols_core] = exogenous_scaler.fit_transform(df_train[exog_cols_core])
 
-    # training table: [r_std, exog...]
-    df_train_scaled = pd.DataFrame({'r_std': return_scaler.fit_transform(df_train[['lr_resid']]).ravel()})
-    for c in exog_cols: df_train_scaled[c] = exog_scaled[c]
+    # === r_std 래그 15개를 항상 exogenous로 추가 ===
+    LAG_K = 15
+    for k in range(1, LAG_K+1):
+        df_train_scaled[f'rstd_lag{k}'] = df_train_scaled['r_std'].shift(k)
 
-    validate_dataframe(df_train_scaled, "스케일 후(학습 입력)", df_train_scaled.columns.tolist())
-    df_train_scaled = clean_infinite_and_nan(df_train_scaled, df_train_scaled.columns.tolist(), mode="zero")
+    df_train_scaled = df_train_scaled.join(exog_scaled)
+    df_train_scaled = df_train_scaled.fillna(0.0)
+
+    exog_cols = [c for c in df_train_scaled.columns if c != 'r_std']
 
     df_target_raw = df_target[['date',target_col]].copy()
 
-    # clamp quantiles on resid
-    lr_q_low, lr_q_high = df_train['lr_resid'].quantile([0.01, 0.99]).tolist()
+    # lr 동적 클램프(최근 120일, 0.5~99.5%)
+    tail = df_train['lr'].iloc[-120:]
+    lr_q_low, lr_q_high = tail.quantile([0.005, 0.995]).tolist()
+    print(f"동적 클램프(lr, last120d): low={lr_q_low:.3e}, high={lr_q_high:.3e}")
 
-    print(f"학습 데이터 기간: {df_train['date'].min().date()} ~ {df_train['date'].max().date()}")
-    print(f"타깃 데이터 기간: {df_target_raw['date'].min().date()} ~ {df_target_raw['date'].max().date()}")
+    print(f"학습 기간: {df_train['date'].min().date()} ~ {df_train['date'].max().date()}")
+    print(f"예측 기간: {df_target_raw['date'].min().date()} ~ {df_target_raw['date'].max().date()}")
     print(f"동적 외생(일별): {dynamic_columns}")
-    print(f"저빈도 파생(제거됨): []")
     print(f"기술지표(일별): {tech_cols}")
-    print(f"클램프 분위수(resid): low={lr_q_low:.6e}, high={lr_q_high:.6e}")
+    print(f"exog 채널 수(래그 포함): {len(exog_cols)}")
 
-    ema_last = float(df_train['lr_ema10'].iloc[-1])
+    start_level = float(df_train[target_col].iloc[-1])
 
-    return (df_train_scaled, df_train, df_target_raw,
-            return_scaler, exogenous_scaler,
-            target_col, exog_cols, lr_q_low, lr_q_high, ema_last)
+    return (df_train_scaled, df_target_raw, return_scaler, exogenous_scaler,
+            target_col, exog_cols, lr_q_low, lr_q_high, start_level)
+
 
 # ========================== sequences with policy (weekly_repeat) ==========================
-def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=60, pred_length=7):
+def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=90, pred_length=7):
     """
-    훈련 시에도 예측 시와 동일한 외생 정책 사용:
-    - future exog = '최근 7일 반복'(last7)  -> covariate shift 완화
-    입력 data: 첫 컬럼 r_std, 이후 exog들
+    학습 시에도 예측 시와 동일한 외생 정책 사용:
+    - future exog = '최근 7일 반복'(last7) — 학습 시 policy alignment
+    입력: 첫 컬럼 r_std, 이후 exog들(여기엔 r_std 래그 포함)
     """
     arr = data.values
     D = arr.shape[1]; E = D - 1
@@ -215,8 +228,8 @@ def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=60, pred_le
         past_exo = past[:, 1:] if E>0 else np.zeros((seq_length,0))
         last7 = past_exo[-7:] if len(past_exo) else np.zeros((7,0))
         reps = int(np.ceil(pred_length/7))
-        fut_exo = np.vstack([last7]*reps)[:pred_length]  # [pred, E]
-        fut_r = arr[i:i+pred_length, 0]                  # [pred] (r_std truth)
+        fut_exo = np.vstack([last7]*reps)[:pred_length]
+        fut_r = arr[i:i+pred_length, 0]            # r_std truth
         X_seq.append(past); y_seq.append(fut_r); X_exo_fut.append(fut_exo)
     X = np.asarray(X_seq); y = np.asarray(y_seq); X_exo_future=np.asarray(X_exo_fut)
     check_array_finite("학습입력(X_seq)", X)
@@ -224,27 +237,35 @@ def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=60, pred_le
     check_array_finite("학습미래외생(X_exo_future)", X_exo_future)
     return X, y, X_exo_future
 
+
 # ========================== future exog for inference ==========================
 def make_future_exog_scaled_from_train(df_train_scaled: pd.DataFrame, exog_cols: List[str],
-                                       horizon: int, mode="weekly_repeat") -> np.ndarray:
-    if not exog_cols: return np.zeros((horizon,0), dtype=float)
-    last_30 = df_train_scaled[exog_cols].iloc[-30:].to_numpy()
+                                       horizon: int, mode="biweekly_repeat") -> np.ndarray:
+    if not exog_cols:
+        return np.zeros((horizon,0), dtype=float)
+    hist = df_train_scaled[exog_cols].iloc[-30:].to_numpy()
+
     if mode=="hold_last":
-        fut = np.tile(last_30[-1], (horizon,1))
+        fut = np.tile(hist[-1], (horizon, 1))
     elif mode=="weekly_repeat":
-        last_7 = last_30[-7:]; reps=int(np.ceil(horizon/7))
+        last_7 = hist[-7:]; reps=int(np.ceil(horizon/7))
         fut = np.vstack([last_7]*reps)[:horizon]
+    elif mode=="biweekly_repeat":
+        last_14 = hist[-14:]; reps=int(np.ceil(horizon/14))
+        fut = np.vstack([last_14]*reps)[:horizon]
     elif mode=="zero_mean":
-        fut = np.zeros((horizon, len(exog_cols)))
+        fut = np.zeros((horizon, hist.shape[1]))
     else:
         raise ValueError("Unknown exog mode")
     return np.nan_to_num(fut, nan=0.0, posinf=0.0, neginf=0.0)
 
-# ========================== training (teacher forcing + extra losses) ==========================
+
+# ========================== training ==========================
 def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
-                                epochs=220, lr=3e-4,
-                                tf_start=1.0, tf_end=0.3,
-                                gamma_drift=0.01, lam_sign=0.35, lam_trend=0.20, lam_slope=0.10):
+                                epochs=260, lr=3e-4,
+                                tf_start=0.8, tf_end=0.05,
+                                gamma_drift=0.002, lam_sign=0.20, lam_trend=0.35, lam_slope=0.15,
+                                patience=50):
     print("모델 학습 시작 (policy-aligned exog + TF + AR head)...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"사용 디바이스: {device}")
@@ -261,13 +282,13 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
 
     crit = nn.HuberLoss(delta=1.0)
     opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    best=1e9; patience=25; bad=0
+    best=1e9; bad=0
 
     for epoch in range(1, epochs+1):
         model.train(); opt.zero_grad()
         p_tf = tf_start + (tf_end - tf_start) * ((epoch-1)/(epochs-1))
 
-        cur = Xt.clone()  # [N, seq, D]
+        cur = Xt.clone()
         preds = []
 
         for t in range(pred_len):
@@ -285,7 +306,7 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
 
         preds = torch.cat(preds, dim=1)  # [N, pred_len]
 
-        # extra losses
+        # 누적 로그수익률 일치(추세), 기울기, 방향성, 드리프트 억제(완화된 가중치)
         cum_pred = torch.cumsum(preds, dim=1)
         cum_true = torch.cumsum(y_all, dim=1)
         trend_loss = nn.MSELoss()(cum_pred, cum_true)
@@ -312,7 +333,8 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
                 dir_acc = torch.mean(torch.sign(preds).eq(torch.sign(y_all)).float()).item()
             print(f"Epoch {epoch:>3}/{epochs}  Loss={loss.item():.6f}  TF={p_tf:.2f}  DirAcc={dir_acc:.3f}")
 
-        if loss.item()<best-1e-6: best=loss.item(); bad=0
+        if loss.item()<best-1e-6:
+            best=loss.item(); bad=0
         else:
             bad+=1
             if bad>=patience:
@@ -321,25 +343,64 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
     print("모델 학습 완료.")
     return model
 
+
+# ========================== amplitude calibration ==========================
+def estimate_amp_scale(df_train_scaled: pd.DataFrame, return_scaler: StandardScaler,
+                       model: nn.Module, seq_len=90, lookback=60) -> float:
+    """
+    학습 꼬리 구간에서 one-step 롤링 예측으로 lr_pred를 만들고,
+    std_true/std_pred 비율로 진폭 보정계수 산정(0.8~2.5로 클립).
+    """
+    device = next(model.parameters()).device
+    arr = df_train_scaled.to_numpy()
+    if len(arr) < seq_len + lookback + 1:
+        print("[AmpCalib] 데이터가 부족하여 보정 생략")
+        return 1.0
+
+    seq = arr[-(seq_len+lookback):-lookback]   # 시작 윈도우 [seq_len, D]
+    lr_true_tail = return_scaler.inverse_transform(
+        df_train_scaled[['r_std']].iloc[-lookback:].to_numpy()
+    ).ravel()
+
+    lr_pred_tail = []
+    with torch.no_grad():
+        for t in range(lookback):
+            xt = torch.tensor(seq, dtype=torch.float32, device=device).unsqueeze(0)
+            endo = xt[:, :, 0:1]
+            exog = xt[:, :, 1:] if seq.shape[1]>1 else xt[:, :, 0:1]
+            r_std = model(endo, exog).cpu().numpy().ravel()[0]
+            lr_hat = return_scaler.inverse_transform([[r_std]]).ravel()[0]
+            lr_pred_tail.append(lr_hat)
+
+            # 다음 step 준비(예측 r_std 주입 + 실제 exog)
+            exo_t = arr[-lookback + t, 1:] if arr.shape[1]>1 else np.array([])
+            r_std_next = return_scaler.transform([[lr_hat]]).ravel()[0]
+            new_row = np.concatenate([[r_std_next], exo_t], axis=0)
+            seq = np.vstack([seq[1:], new_row])
+
+    s_true = np.std(lr_true_tail) + 1e-12
+    s_pred = np.std(lr_pred_tail) + 1e-12
+    amp = np.clip(s_true / s_pred, 0.8, 2.5)
+    print(f"[AmpCalib] std_true={s_true:.3e}, std_pred={s_pred:.3e}, scale={amp:.3f}")
+    return float(amp)
+
+
 # ========================== inference ==========================
 def predict_future_daily(model,
                          last_seq_scaled: np.ndarray,
                          return_scaler: StandardScaler,
                          future_exog_scaled: np.ndarray,
                          start_level: float,
-                         ema_start: float,
-                         r_low: float, r_high: float, tau: int = 14) -> List[float]:
+                         lr_low: float, lr_high: float,
+                         shrink_tau: float = None,
+                         amp_scale: float = 1.0) -> List[float]:
     """
-    입력 last_seq_scaled: [seq, 1 + E] (첫 열 r_std(resid))
+    입력 last_seq_scaled: [seq, 1 + E] (첫 열 r_std=표준화된 lr)
     """
     device = next(model.parameters()).device
     model.eval(); H=len(future_exog_scaled)
     seq = last_seq_scaled.copy(); win = seq.shape[0]
     preds_level=[]; cur=float(start_level)
-
-    # EMA(10) 파라미터
-    alpha = 2.0 / (10.0 + 1.0)
-    ema = float(ema_start)
 
     with torch.no_grad():
         for t in range(H):
@@ -347,24 +408,23 @@ def predict_future_daily(model,
             endo = xt[:, :, 0:1]
             exog = xt[:, :, 1:] if seq.shape[1]>1 else xt[:, :, 0:1]
             r_std = model(endo, exog).cpu().numpy().ravel()[0]
-            r_resid = return_scaler.inverse_transform([[r_std]]).ravel()[0]
+            lr_hat = return_scaler.inverse_transform([[r_std]]).ravel()[0]
 
-            # resid clamp + 완만한 수축
-            r_resid = float(np.clip(r_resid, r_low, r_high))
-            r_resid *= float(np.exp(-t / max(1.0, float(tau))))
-
-            # EMA 갱신 및 복원
-            ema = alpha * (ema + r_resid) + (1 - alpha) * ema
-            lr_hat = ema + r_resid
+            # 보정 + clamp + optional shrink
+            lr_hat *= amp_scale
+            lr_hat = float(np.clip(lr_hat, lr_low, lr_high))
+            if shrink_tau is not None and shrink_tau > 0:
+                lr_hat *= float(np.exp(-t / float(shrink_tau)))
 
             cur = cur * np.exp(lr_hat)
             preds_level.append(cur)
 
             exog_t = future_exog_scaled[t] if future_exog_scaled.size else np.array([])
-            r_std_next = return_scaler.transform([[r_resid]]).ravel()[0]
+            r_std_next = return_scaler.transform([[lr_hat]]).ravel()[0]
             new_row = np.concatenate([[r_std_next], exog_t], axis=0)
             seq = np.vstack([seq, new_row])[-win:]
     return preds_level
+
 
 # ========================== plot / report ==========================
 def plot_results(actual, predicted, dates, title_suffix=""):
@@ -374,28 +434,26 @@ def plot_results(actual, predicted, dates, title_suffix=""):
     plt.title(f'USD/KRW Prediction {title_suffix}'.strip())
     plt.xlabel('Date'); plt.ylabel('USD/KRW')
     plt.legend(); plt.grid(True, alpha=0.3); plt.xticks(rotation=45)
-    plt.tight_layout(); plt.savefig('timexer_policy_results.png', dpi=300, bbox_inches='tight'); plt.show()
+    plt.tight_layout(); plt.savefig('timexer_lr_results.png', dpi=300, bbox_inches='tight'); plt.show()
 
-def save_results(actual, predicted, dates, model_name='TimeXer (daily-only exog, resid+EMA, attn, AR15x0.6)'):
+def save_results(actual, predicted, dates, model_name='TimeXer (LR target, attn, AR15x0.90, lag-exog, amp-calib)'):
     actual=np.asarray(actual, dtype=float); predicted=np.asarray(predicted, dtype=float)
     predicted = np.nan_to_num(predicted, nan=np.nanmean(predicted) if np.any(~np.isnan(predicted)) else 0.0)
     df=pd.DataFrame({'date':dates,'actual':actual,'predicted':predicted})
     df['error']=df['actual']-df['predicted']; df['error_pct']=df['error']/df['actual']*100.0
-    df.to_csv('timexer_policy_results.csv', index=False)
+    df.to_csv('timexer_lr_results.csv', index=False)
     mse=mean_squared_error(actual,predicted); mae=mean_absolute_error(actual,predicted); rmse=float(np.sqrt(mse))
     dir_acc = np.mean(np.sign(actual[1:]-actual[:-1]) == np.sign(predicted[1:]-predicted[:-1]))
     print("\n예측 성능:"); print(f"MSE : {mse:.4f}"); print(f"MAE : {mae:.4f}"); print(f"RMSE: {rmse:.4f}"); print(f"Direction Acc: {dir_acc:.3f}")
     pd.DataFrame([{'MSE':mse,'MAE':mae,'RMSE':rmse,'DirAcc':dir_acc,
                    'prediction_days':len(predicted),'model':model_name}]
-                 ).to_csv('timexer_policy_summary.csv', index=False)
-    print("\n저장 완료:\n- timexer_policy_results.csv\n- timexer_policy_summary.csv\n- timexer_policy_results.png")
+                 ).to_csv('timexer_lr_summary.csv', index=False)
+    print("\n저장 완료:\n- timexer_lr_results.csv\n- timexer_lr_summary.csv\n- timexer_lr_results.png")
 
 def baseline_metrics(actual, predicted):
     actual = np.asarray(actual, dtype=float)
     predicted = np.asarray(predicted, dtype=float)
-    # Naive-1
     naive = np.r_[actual[0], actual[:-1]]
-    # Drift-EMA(10) on lr
     lr = np.r_[0, np.log(actual[1:]/actual[:-1])]
     ema10 = pd.Series(lr).ewm(span=10, adjust=False).mean().values
     drift = actual[0] * np.exp(np.cumsum(ema10))
@@ -410,47 +468,43 @@ def baseline_metrics(actual, predicted):
     print(f"[Naive1] RMSE={rmse_n:.3f} MAE={mae_n:.3f}")
     print(f"[Drift ] RMSE={rmse_d:.3f} MAE={mae_d:.3f}")
 
+
 # ========================== main ==========================
 def main():
-    print("="*70); print("Daily-only exogenous features (policy-aligned; resid-EMA)"); print("="*70)
+    print("="*70); print("Daily-only exog (LR target; policy-aligned; lag-exog + patches)"); print("="*70)
 
-    (df_train_scaled, df_train_ext, df_target_raw,
-     return_scaler, exogenous_scaler,
-     target_col, exog_cols, lr_q_low, lr_q_high, ema_last) = load_and_preprocess_data()
+    (df_train_scaled, df_target_raw, return_scaler, exogenous_scaler,
+     target_col, exog_cols, lr_q_low, lr_q_high, start_level) = load_and_preprocess_data()
 
-    seq_len=60
+    seq_len=90
     pred_len=7
     X_seq, y_std, X_exo_future = create_sequences_multistep_policy(
         df_train_scaled, seq_length=seq_len, pred_length=pred_len
     )
-    print(f"학습 시퀀스: {X_seq.shape}, 타깃(r_std resid): {y_std.shape}, 미래외생(정책): {X_exo_future.shape}")
+    print(f"학습 시퀀스: {X_seq.shape}, 타깃(r_std=lr_std): {y_std.shape}, 미래외생: {X_exo_future.shape}")
 
-    # model
     D = df_train_scaled.shape[1]; exog_dim = max(1, D-1)
-    if exog_dim == 1 and D <= 1:
-        X_seq = np.concatenate([X_seq, np.zeros((X_seq.shape[0], X_seq.shape[1], 1), dtype=X_seq.dtype)], axis=2)
-        X_exo_future = np.zeros((X_exo_future.shape[0], X_exo_future.shape[1], 1), dtype=X_exo_future.dtype)
-        exog_dim = 1
-
     model = SimpleTimeXerModel(endogenous_dim=1, exogenous_dim=exog_dim,
-                               hidden_size=128, num_layers=2, ar_lags=15, ar_gain=0.60)
+                               hidden_size=192, num_layers=2, ar_lags=15, ar_gain=0.90)
     model = train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
-                                        epochs=220, lr=3e-4, tf_start=1.0, tf_end=0.3,
-                                        gamma_drift=0.01, lam_sign=0.35, lam_trend=0.20, lam_slope=0.10)
+                                        epochs=260, lr=3e-4, tf_start=0.8, tf_end=0.05,
+                                        gamma_drift=0.002, lam_sign=0.20, lam_trend=0.35, lam_slope=0.15,
+                                        patience=50)
 
-    # inference
     last_seq_scaled = df_train_scaled.iloc[-seq_len:].to_numpy()
     check_array_finite("마지막시퀀스(last_seq_scaled)", last_seq_scaled)
 
     H = len(df_target_raw)
-    future_exog_scaled = make_future_exog_scaled_from_train(df_train_scaled, exog_cols, H, mode="weekly_repeat")
+    future_exog_scaled = make_future_exog_scaled_from_train(df_train_scaled, exog_cols, H, mode="biweekly_repeat")
     check_array_finite("타깃외생(future_exog_scaled)", future_exog_scaled)
 
-    start_level = float(df_train_ext[target_col].iloc[-1])
+    # 학습 꼬리 기반 진폭 보정
+    amp_scale = estimate_amp_scale(df_train_scaled, return_scaler, model, seq_len=seq_len, lookback=60)
+
     preds = predict_future_daily(model, last_seq_scaled, return_scaler,
-                                 future_exog_scaled, start_level,
-                                 ema_start=ema_last,
-                                 r_low=lr_q_low, r_high=lr_q_high, tau=14)
+                                 future_exog_scaled, start_level=start_level,
+                                 lr_low=lr_q_low, lr_high=lr_q_high,
+                                 shrink_tau=None, amp_scale=amp_scale)
 
     actual_values = df_target_raw[target_col].to_numpy()
     actual_dates = df_target_raw['date']
@@ -463,6 +517,7 @@ def main():
     baseline_metrics(actual_values, preds)
 
     print("\n"+"="*70); print("완료"); print("="*70)
+
 
 if __name__ == "__main__":
     main()
