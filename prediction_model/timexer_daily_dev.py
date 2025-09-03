@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-USD/KRW daily forecasting — LR(target) 버전 (직선 하방편향 해소)
-- Target: lr = log(y_t / y_{t-1})  → 표준화(r_std) 후 학습
-- Restore: y_t = y_{t-1} * exp(lr_hat)  (EMA 복원 불필요)
-- Model: LSTM(endo/exo) + cross-attn + MLP + linear AR head(lags=15, gain=0.6)
-- Train: multi-step teacher forcing(예측시 외생 정책과 동일), 추가 손실(trend/slope/sign/drift)
-- Exog: lr_ema10(추세), 캘린더(dow_sin, dow_cos, eom), 기술지표, + r_std 래그(15개; 항상 포함)
-- Inference: lr 분위수 클램프(1~99%), 기본 수축 없음(원하면 shrink_tau 크게)
+USD/KRW daily forecasting — TimeXer(LR target) + 급등 추종성 강화(편향/진폭 보정, weekday_cycle, drift 결합)
+
+- Target: lr = log(y_t / y_{t-1}) → 표준화(r_std) 학습
+- Restore: y_t = y_{t-1} * exp(lr_hat)
+- Model: LSTM(endo/exo) + cross-attn + MLP + linear AR head(lags=15, gain=0.90)
+- Train: policy-aligned multi-step Teacher Forcing, 추가 손실(trend/slope/sign/drift)
+- Exog: lr_ema10, 캘린더(dow_sin, dow_cos, eom), 기술지표(확장), + r_std 래그(15개)
+- Inference:
+    1) 동적 클램프(최근 120일, 0.5~99.5%)
+    2) weekday_cycle(최근 4주 동일 요일 반복) 외생
+    3) tail one-step backtest로 bias+scale 동시 보정 후 EMA10 drift와 혼합
 """
 
 import warnings, numpy as np, pandas as pd
@@ -29,13 +33,16 @@ plt.rcParams['axes.unicode_minus'] = False
 def validate_dataframe(df: pd.DataFrame, name: str, cols: list):
     bad = {}
     for c in cols:
-        if c not in df.columns: continue
+        if c not in df.columns:
+            continue
         s = df[c]
         n_nan = int(s.isna().sum()); n_inf = int(np.isinf(s).sum())
-        if n_nan or n_inf: bad[c] = (n_nan, n_inf)
+        if n_nan or n_inf:
+            bad[c] = (n_nan, n_inf)
     if bad:
         print(f"[검증 경고] {name}에 비정상 값:")
-        for c,(nn,ni) in bad.items(): print(f"  - {c}: NaN={nn}, Inf={ni}")
+        for c,(nn,ni) in bad.items():
+            print(f"  - {c}: NaN={nn}, Inf={ni}")
     else:
         print(f"[검증 OK] {name}: NaN/Inf 없음")
 
@@ -55,8 +62,8 @@ def check_array_finite(name: str, arr: np.ndarray):
 
 # ========================== model ==========================
 class SimpleTimeXerModel(nn.Module):
-    def __init__(self, endogenous_dim=1, exogenous_dim=5, hidden_size=128, num_layers=2,
-                 ar_lags=15, ar_gain=0.60):
+    def __init__(self, endogenous_dim=1, exogenous_dim=5, hidden_size=192, num_layers=2,
+                 ar_lags=15, ar_gain=0.90):
         super().__init__()
         self.ar_lags = ar_lags
         self.ar_gain = ar_gain
@@ -138,15 +145,19 @@ def load_and_preprocess_data():
     df_train['lr'] = lr
     df_train['lr_ema10'] = lr.ewm(span=10, adjust=False).mean()
 
-    # 기술지표(레벨/수익률 혼합)
+    # 기술지표(레벨/수익률 혼합) — 확장
     ma20 = y.rolling(20).mean(); std20 = y.rolling(20).std()
     df_train['lvl_z20']   = (y - ma20) / (std20 + 1e-12)
     df_train['lvl_rsi14'] = rsi(y, 14) / 100.0
     df_train['lr_ma5']    = lr.rolling(5).mean()
     df_train['lr_ma10']   = lr.rolling(10).mean()
     df_train['lr_vol10']  = lr.rolling(10).std()
+    df_train['lr_ema3']   = lr.ewm(span=3,  adjust=False).mean()
+    df_train['lr_vol20']  = lr.rolling(20).std()
+    df_train['lvl_mom5']  = (y / y.shift(5) - 1.0)
+    df_train['lvl_z60']   = (y - y.rolling(60).mean()) / (y.rolling(60).std() + 1e-12)
 
-    tech_cols=['lvl_z20','lvl_rsi14','lr_ma5','lr_ma10','lr_vol10']
+    tech_cols=['lvl_z20','lvl_rsi14','lr_ma5','lr_ma10','lr_vol10','lr_ema3','lr_vol20','lvl_mom5','lvl_z60']
 
     # calendar
     df_train['dow']     = df_train['date'].dt.weekday
@@ -184,27 +195,31 @@ def load_and_preprocess_data():
 
     df_target_raw = df_target[['date',target_col]].copy()
 
-    # lr 클램프 분위수
-    lr_q_low, lr_q_high = df_train['lr'].quantile([0.01, 0.99]).tolist()
+    # lr 동적 클램프(최근 120일, 0.5~99.5%)
+    tail = df_train['lr'].iloc[-120:]
+    lr_q_low, lr_q_high = tail.quantile([0.005, 0.995]).tolist()
+    print(f"동적 클램프(lr, last120d): low={lr_q_low:.3e}, high={lr_q_high:.3e}")
 
     print(f"학습 기간: {df_train['date'].min().date()} ~ {df_train['date'].max().date()}")
     print(f"예측 기간: {df_target_raw['date'].min().date()} ~ {df_target_raw['date'].max().date()}")
     print(f"동적 외생(일별): {dynamic_columns}")
     print(f"기술지표(일별): {tech_cols}")
     print(f"exog 채널 수(래그 포함): {len(exog_cols)}")
-    print(f"클램프 분위수(lr): low={lr_q_low:.3e}, high={lr_q_high:.3e}")
 
     start_level = float(df_train[target_col].iloc[-1])
 
+    # drift 생성을 위해 lr_ema10만 별도로 반환
+    df_train_drift = df_train[['lr_ema10']].copy()
+
     return (df_train_scaled, df_target_raw, return_scaler, exogenous_scaler,
-            target_col, exog_cols, lr_q_low, lr_q_high, start_level)
+            target_col, exog_cols, lr_q_low, lr_q_high, start_level, df_train_drift)
 
 
 # ========================== sequences with policy (weekly_repeat) ==========================
-def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=60, pred_length=7):
+def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=90, pred_length=7):
     """
     학습 시에도 예측 시와 동일한 외생 정책 사용:
-    - future exog = '최근 7일 반복'(last7)
+    - future exog = '최근 7일 반복'(last7) — 학습 시 policy alignment
     입력: 첫 컬럼 r_std, 이후 exog들(여기엔 r_std 래그 포함)
     """
     arr = data.values
@@ -227,28 +242,41 @@ def create_sequences_multistep_policy(data: pd.DataFrame, seq_length=60, pred_le
 
 # ========================== future exog for inference ==========================
 def make_future_exog_scaled_from_train(df_train_scaled: pd.DataFrame, exog_cols: List[str],
-                                       horizon: int, mode="weekly_repeat") -> np.ndarray:
+                                       horizon: int, mode="weekday_cycle") -> np.ndarray:
+    """
+    weekday_cycle: 최근 4주(28일) 중 마지막 7일 패턴을 주기적으로 순환.
+    """
     if not exog_cols:
-        return np.zeros((horizon,0), dtype=float)
-    last_30 = df_train_scaled[exog_cols].iloc[-30:].to_numpy()
-    if mode=="hold_last":
-        fut = np.tile(last_30[-1], (horizon,1))
-    elif mode=="weekly_repeat":
-        last_7 = last_30[-7:]; reps=int(np.ceil(horizon/7))
+        return np.zeros((horizon, 0), dtype=float)
+
+    hist = df_train_scaled[exog_cols].copy().tail(28)  # 최근 4주
+
+    if mode == "hold_last":
+        fut = np.tile(hist.iloc[-1].to_numpy(), (horizon, 1))
+    elif mode == "weekly_repeat":
+        last_7 = hist.tail(7).to_numpy()
+        reps = int(np.ceil(horizon/7))
         fut = np.vstack([last_7]*reps)[:horizon]
-    elif mode=="zero_mean":
-        fut = np.zeros((horizon, len(exog_cols)))
+    elif mode == "biweekly_repeat":
+        last_14 = hist.tail(14).to_numpy()
+        reps = int(np.ceil(horizon/14))
+        fut = np.vstack([last_14]*reps)[:horizon]
+    elif mode == "weekday_cycle":
+        last_7 = hist.tail(7).to_numpy()
+        reps = int(np.ceil(horizon/7))
+        fut = np.vstack([last_7]*reps)[:horizon]
     else:
         raise ValueError("Unknown exog mode")
+
     return np.nan_to_num(fut, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 # ========================== training ==========================
 def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
-                                epochs=220, lr=3e-4,
-                                tf_start=1.0, tf_end=0.2,
-                                gamma_drift=0.01, lam_sign=0.25, lam_trend=0.45, lam_slope=0.20,
-                                patience=40):
+                                epochs=260, lr=3e-4,
+                                tf_start=0.8, tf_end=0.05,
+                                gamma_drift=0.002, lam_sign=0.20, lam_trend=0.35, lam_slope=0.15,
+                                patience=50):
     print("모델 학습 시작 (policy-aligned exog + TF + AR head)...")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"사용 디바이스: {device}")
@@ -289,7 +317,7 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
 
         preds = torch.cat(preds, dim=1)  # [N, pred_len]
 
-        # 누적 로그수익률 일치(추세), 기울기, 방향성, 드리프트 억제
+        # 누적 로그수익률 일치(추세), 기울기, 방향성, 드리프트 억제(완화된 가중치)
         cum_pred = torch.cumsum(preds, dim=1)
         cum_true = torch.cumsum(y_all, dim=1)
         trend_loss = nn.MSELoss()(cum_pred, cum_true)
@@ -316,7 +344,8 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
                 dir_acc = torch.mean(torch.sign(preds).eq(torch.sign(y_all)).float()).item()
             print(f"Epoch {epoch:>3}/{epochs}  Loss={loss.item():.6f}  TF={p_tf:.2f}  DirAcc={dir_acc:.3f}")
 
-        if loss.item()<best-1e-6: best=loss.item(); bad=0
+        if loss.item()<best-1e-6:
+            best=loss.item(); bad=0
         else:
             bad+=1
             if bad>=patience:
@@ -326,6 +355,58 @@ def train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
     return model
 
 
+# ========================== bias & scale + drift ==========================
+def estimate_bias_and_scale(df_train_scaled, return_scaler, model, seq_len=90, lookback=60):
+    """
+    tail one-step 롤링:
+      - lr_true_tail, lr_pred_tail 계산
+      - bias = mean(lr_true - lr_pred)
+      - amp_scale = std_true / std_pred (0.8~2.5 clip)
+    """
+    device = next(model.parameters()).device
+    arr = df_train_scaled.to_numpy()
+    if len(arr) < seq_len + lookback + 1:
+        print("[BiasCalib] 데이터가 부족하여 보정 생략")
+        return 0.0, 1.0
+
+    seq = arr[-(seq_len+lookback):-lookback]   # [seq_len, D]
+    lr_true_tail = return_scaler.inverse_transform(
+        df_train_scaled[['r_std']].iloc[-lookback:].to_numpy()
+    ).ravel()
+
+    lr_pred_tail = []
+    with torch.no_grad():
+        for t in range(lookback):
+            xt = torch.tensor(seq, dtype=torch.float32, device=device).unsqueeze(0)
+            endo = xt[:, :, 0:1]
+            exog = xt[:, :, 1:] if seq.shape[1] > 1 else xt[:, :, 0:1]
+            r_std = model(endo, exog).cpu().numpy().ravel()[0]
+            lr_hat = return_scaler.inverse_transform([[r_std]]).ravel()[0]
+            lr_pred_tail.append(lr_hat)
+
+            # 다음 step 준비(예측 r_std 주입 + 실제 exog)
+            exo_t = arr[-lookback + t, 1:] if arr.shape[1] > 1 else np.array([])
+            r_std_next = return_scaler.transform([[lr_hat]]).ravel()[0]
+            new_row = np.concatenate([[r_std_next], exo_t], axis=0)
+            seq = np.vstack([seq[1:], new_row])
+
+    lr_pred_tail = np.asarray(lr_pred_tail)
+    bias = float(np.mean(lr_true_tail - lr_pred_tail))
+    s_true = float(np.std(lr_true_tail) + 1e-12)
+    s_pred = float(np.std(lr_pred_tail) + 1e-12)
+    amp_scale = float(np.clip(s_true / s_pred, 0.8, 2.5))
+    print(f"[BiasCalib] bias={bias:.3e}, std_true={s_true:.3e}, std_pred={s_pred:.3e}, scale={amp_scale:.3f}")
+    return bias, amp_scale
+
+def make_drift_path_from_ema10(df_train_drift: pd.DataFrame, horizon: int) -> np.ndarray:
+    """
+    마지막 EMA10을 horizon으로 상수 연장(보수적).
+    과도한 하방/상방을 10~30% 가중으로 묶어주는 용도.
+    """
+    last = float(df_train_drift['lr_ema10'].iloc[-1]) if 'lr_ema10' in df_train_drift.columns else 0.0
+    return np.full(horizon, last, dtype=float)
+
+
 # ========================== inference ==========================
 def predict_future_daily(model,
                          last_seq_scaled: np.ndarray,
@@ -333,6 +414,10 @@ def predict_future_daily(model,
                          future_exog_scaled: np.ndarray,
                          start_level: float,
                          lr_low: float, lr_high: float,
+                         bias: float = 0.0,            # NEW
+                         amp_scale: float = 1.0,       # NEW
+                         drift_path: np.ndarray = None,# NEW
+                         drift_weight: float = 0.25,   # NEW (0~0.35 추천)
                          shrink_tau: float = None) -> List[float]:
     """
     입력 last_seq_scaled: [seq, 1 + E] (첫 열 r_std=표준화된 lr)
@@ -341,6 +426,8 @@ def predict_future_daily(model,
     model.eval(); H=len(future_exog_scaled)
     seq = last_seq_scaled.copy(); win = seq.shape[0]
     preds_level=[]; cur=float(start_level)
+    if drift_path is None:
+        drift_path = np.zeros(H, dtype=float)
 
     with torch.no_grad():
         for t in range(H):
@@ -350,10 +437,13 @@ def predict_future_daily(model,
             r_std = model(endo, exog).cpu().numpy().ravel()[0]
             lr_hat = return_scaler.inverse_transform([[r_std]]).ravel()[0]
 
-            # clamp + optional shrink
+            # 보정: (예측 + bias)*amp_scale 를 clamp 후 drift와 혼합
+            lr_hat = (lr_hat + bias) * amp_scale
             lr_hat = float(np.clip(lr_hat, lr_low, lr_high))
+            lr_hat = (1.0 - drift_weight) * lr_hat + drift_weight * float(drift_path[t])
+
             if shrink_tau is not None and shrink_tau > 0:
-                lr_hat *= float(np.exp(-t / float(shrink_tau)))  # 매우 큰 값(예: 90) 권장
+                lr_hat *= float(np.exp(-t / float(shrink_tau)))
 
             cur = cur * np.exp(lr_hat)
             preds_level.append(cur)
@@ -375,7 +465,7 @@ def plot_results(actual, predicted, dates, title_suffix=""):
     plt.legend(); plt.grid(True, alpha=0.3); plt.xticks(rotation=45)
     plt.tight_layout(); plt.savefig('timexer_lr_results.png', dpi=300, bbox_inches='tight'); plt.show()
 
-def save_results(actual, predicted, dates, model_name='TimeXer (LR target, attn, AR15x0.6, lag-exog)'):
+def save_results(actual, predicted, dates, model_name='TimeXer (LR target, attn, AR15x0.90, lag-exog, bias/scale+drift)'):
     actual=np.asarray(actual, dtype=float); predicted=np.asarray(predicted, dtype=float)
     predicted = np.nan_to_num(predicted, nan=np.nanmean(predicted) if np.any(~np.isnan(predicted)) else 0.0)
     df=pd.DataFrame({'date':dates,'actual':actual,'predicted':predicted})
@@ -410,12 +500,12 @@ def baseline_metrics(actual, predicted):
 
 # ========================== main ==========================
 def main():
-    print("="*70); print("Daily-only exog (LR target; policy-aligned; lag-exog)"); print("="*70)
+    print("="*70); print("Daily-only exog (LR target; policy-aligned; lag-exog + bias/scale + weekday_cycle + drift)"); print("="*70)
 
     (df_train_scaled, df_target_raw, return_scaler, exogenous_scaler,
-     target_col, exog_cols, lr_q_low, lr_q_high, start_level) = load_and_preprocess_data()
+     target_col, exog_cols, lr_q_low, lr_q_high, start_level, df_train_drift) = load_and_preprocess_data()
 
-    seq_len=90          # 추세 강화(기존 60→90 권장)
+    seq_len=90
     pred_len=7
     X_seq, y_std, X_exo_future = create_sequences_multistep_policy(
         df_train_scaled, seq_length=seq_len, pred_length=pred_len
@@ -424,23 +514,32 @@ def main():
 
     D = df_train_scaled.shape[1]; exog_dim = max(1, D-1)
     model = SimpleTimeXerModel(endogenous_dim=1, exogenous_dim=exog_dim,
-                               hidden_size=128, num_layers=2, ar_lags=15, ar_gain=0.60)
+                               hidden_size=192, num_layers=2, ar_lags=15, ar_gain=0.90)
     model = train_model_teacher_forcing(model, X_seq, y_std, X_exo_future,
-                                        epochs=240, lr=3e-4, tf_start=1.0, tf_end=0.2,
-                                        gamma_drift=0.01, lam_sign=0.25, lam_trend=0.45, lam_slope=0.20,
-                                        patience=45)
+                                        epochs=260, lr=3e-4, tf_start=0.8, tf_end=0.05,
+                                        gamma_drift=0.002, lam_sign=0.20, lam_trend=0.35, lam_slope=0.15,
+                                        patience=50)
 
     last_seq_scaled = df_train_scaled.iloc[-seq_len:].to_numpy()
     check_array_finite("마지막시퀀스(last_seq_scaled)", last_seq_scaled)
 
     H = len(df_target_raw)
-    future_exog_scaled = make_future_exog_scaled_from_train(df_train_scaled, exog_cols, H, mode="weekly_repeat")
+    # 미래 외생: weekday_cycle
+    future_exog_scaled = make_future_exog_scaled_from_train(df_train_scaled, exog_cols, H, mode="weekday_cycle")
     check_array_finite("타깃외생(future_exog_scaled)", future_exog_scaled)
+
+    # tail 기반 bias + scale 동시 추정
+    bias, amp_scale = estimate_bias_and_scale(df_train_scaled, return_scaler, model,
+                                              seq_len=seq_len, lookback=60)
+    # EMA10 기반 drift 경로
+    drift_path = make_drift_path_from_ema10(df_train_drift, H)
 
     preds = predict_future_daily(model, last_seq_scaled, return_scaler,
                                  future_exog_scaled, start_level=start_level,
                                  lr_low=lr_q_low, lr_high=lr_q_high,
-                                 shrink_tau=None)  # 수축 제거
+                                 bias=bias, amp_scale=amp_scale,
+                                 drift_path=drift_path, drift_weight=0.25,
+                                 shrink_tau=None)
 
     actual_values = df_target_raw[target_col].to_numpy()
     actual_dates = df_target_raw['date']
