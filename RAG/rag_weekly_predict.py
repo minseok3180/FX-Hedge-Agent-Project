@@ -11,15 +11,15 @@ RAG 주입용 USD/KRW 주간(7일) 예측 스크립트
 - tail 기반 bias/amp 보정 + EMA10 drift 혼합
 
 Usage:
-  # 기준일 = 2025-09-03, 정형데이터 = 2020-01-01 ~ 2025-09-03 수집 완료 가정
-  # → 예측 구간: 2025-09-04 ~ 2025-09-10
+  # 기준일(as-of) = 2025-09-03 → 파일명: predicted_20250903.csv / .json
+  # 저장 위치: 기본값은 이 파이썬 파일이 있는 폴더
   python rag_weekly_predict.py \
     --fx fx_data/wide_20200101_20250903.csv \
     --target_col "usdkrw(target)" \
     --use_yahoo 1 \
-    --out_dir RAG/prediction_model \
     --horizon 7 \
-    --seq_len 90
+    --seq_len 90 \
+    --asof_date 2025-09-03
 """
 
 import argparse, json, warnings
@@ -103,9 +103,8 @@ def _detect_yf_daily_columns(cols: List[str]) -> List[str]:
 # ========================== 선택적 야후 외생 ==========================
 def fetch_yahoo_daily(start, end, tickers=None):
     """
-    변경 사항:
-    - date를 문자열로 변환하지 않고 tz-naive datetime으로 유지
-    - 기본 tickers를 UUP, ^TNX, ^VIX, ^DXY 순으로 시도 (개별 실패 무시)
+    - 날짜 tz-naive 유지
+    - 기본 tickers: UUP, ^TNX, ^VIX, ^DXY (개별 실패 무시)
     """
     if tickers is None:
         tickers = ["UUP", "^TNX", "^VIX", "^DXY"]
@@ -126,13 +125,10 @@ def fetch_yahoo_daily(start, end, tickers=None):
             h[f"{t}_close"] = h["close"]
             h[f"{t}_lr"] = np.log(h["close"] / h["close"].shift(1)).replace([np.inf,-np.inf], np.nan)
             out = h[[f"{t}_close", f"{t}_lr"]].copy()
-
-            # 날짜를 tz-naive datetime으로 유지
             out.index = out.index.tz_localize(None)
             out = out.reset_index().rename(columns={"Date":"date"})
             outs.append(out)
-        except Exception as e:
-            # 개별 티커 실패는 무시
+        except Exception:
             continue
 
     if not outs:
@@ -187,7 +183,6 @@ class SimpleTimeXerModel(nn.Module):
 
 # ========================== 전처리(일별) ==========================
 LOW_FREQ_DROP = [
-    # 월/분기/연로 알려진 후보들(존재할 때만 제거)
     'base','us_current','us_growth','us_interest',
     'us_ex','us_im','reserve','us_reserve','us_export','us_import',
     'us_gdp','consumer','exp_rate','im_rate','us_stock','dir_inv','us_indpro','us_unemp','us_prod'
@@ -197,7 +192,7 @@ def build_daily_dataset(fx_csv: Path, target_col: str, use_yahoo: bool):
     df = pd.read_csv(fx_csv)
     if 'date' not in df.columns:
         raise ValueError("입력 CSV에 'date' 칼럼이 필요합니다.")
-    df['date'] = pd.to_datetime(df['date'], errors='coerce')  # 강제 변환
+    df['date'] = pd.to_datetime(df['date'], errors='coerce')
     df = df.sort_values('date').reset_index(drop=True)
 
     # 타깃명 표준화
@@ -242,7 +237,6 @@ def build_daily_dataset(fx_csv: Path, target_col: str, use_yahoo: bool):
         yend   = (df['date'].max() + pd.Timedelta(days=3)).strftime("%Y-%m-%d")
         ydf = fetch_yahoo_daily(ystart, yend)
         if not ydf.empty:
-            # dtype 통일: 양쪽 모두 datetime64[ns]
             ydf['date'] = pd.to_datetime(ydf['date'], errors='coerce')
             ydf = ydf.dropna(subset=['date'])
             df = df.merge(ydf, on='date', how='left')
@@ -257,7 +251,7 @@ def build_daily_dataset(fx_csv: Path, target_col: str, use_yahoo: bool):
     # 상수/전부0 제거
     df, dynamic_cols = drop_constant_or_allzero(df, dynamic_candidates)
 
-    # 스케일러 준비
+    # 스케일러
     return_scaler    = StandardScaler()
     exogenous_scaler = StandardScaler()
 
@@ -287,7 +281,6 @@ def build_daily_dataset(fx_csv: Path, target_col: str, use_yahoo: bool):
     start_level = float(df[target_col].iloc[-1])
     drift_df = df[['lr_ema10']].copy()
 
-    # 로그
     print(f"학습 기간: {df['date'].min().date()} ~ {df['date'].max().date()}")
     print(f"동적 외생(일별; YF 포함): {dynamic_cols[:20]}{'...' if len(dynamic_cols)>20 else ''}")
     print(f"기술지표(일별): {len(tech_cols)}개")
@@ -375,7 +368,7 @@ def train_model(model, X_seq, y_std, X_exo_future,
         for t in range(pred_len):
             endo = cur[:, :, 0:1]
             exog = cur[:, :, 1:] if cur.size(-1)>1 else cur[:, :, 0:1]
-            out = model(endo, exog)                 # [N,1] r_std
+            out = model(endo, exo)
             preds.append(out)
 
             use_truth = (torch.rand(Xt.size(0), device=device) < p_tf).float().unsqueeze(1)
@@ -387,7 +380,6 @@ def train_model(model, X_seq, y_std, X_exo_future,
 
         preds = torch.cat(preds, dim=1)
 
-        # 부가 손실
         cum_pred = torch.cumsum(preds, dim=1)
         cum_true = torch.cumsum(y_all, dim=1)
         trend_loss = nn.MSELoss()(cum_pred, cum_true)
@@ -398,10 +390,10 @@ def train_model(model, X_seq, y_std, X_exo_future,
         drift_penalty = (preds.mean(dim=1, keepdim=True) ** 2).mean()
 
         loss = (crit(preds, y_all)
-                + lam_sign * sign_loss
-                + lam_trend * trend_loss
-                + lam_slope * slope_loss
-                + gamma_drift * drift_penalty)
+                + 0.20 * sign_loss
+                + 0.30 * trend_loss
+                + 0.12 * slope_loss
+                + 0.002 * drift_penalty)
 
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -467,7 +459,6 @@ def predict_horizon(model,
             r_std = model(endo, exog).cpu().numpy().ravel()[0]
             lr_hat = return_scaler.inverse_transform([[r_std]]).ravel()[0]
 
-            # 보정 + 클램프 + drift 혼합
             lr_hat = (lr_hat + bias) * amp_scale
             lr_hat = float(np.clip(lr_hat, lr_low, lr_high))
             lr_hat = (1.0 - drift_weight) * lr_hat + drift_weight * float(drift_path[t])
@@ -489,13 +480,18 @@ def main():
     ap.add_argument("--fx", required=True, help="ECOS 와이드 CSV")
     ap.add_argument("--target_col", default="usdkrw(target)")
     ap.add_argument("--use_yahoo", type=int, default=1)
-    ap.add_argument("--out_dir", default="prediction_model")
+    ap.add_argument("--out_dir", default=None, help="저장 폴더(미입력 시 이 스크립트 파일이 위치한 폴더)")
     ap.add_argument("--horizon", type=int, default=7)
     ap.add_argument("--seq_len", type=int, default=90)
+    ap.add_argument("--asof_date", default=None, help="파일명 기준일 YYYY-MM-DD (미입력 시 데이터 마지막 날짜 사용)")
     args = ap.parse_args()
 
+    # 저장 경로 결정: 기본은 스크립트 디렉터리
+    script_dir = Path(__file__).resolve().parent
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else script_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     fx_csv = Path(args.fx)
-    out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
 
     # 1) 데이터 구성
     raw_df, df_scaled, ret_scaler, exo_scaler, exo_core, lr_low, lr_high, start_level, drift_df = \
@@ -530,11 +526,27 @@ def main():
         bias=bias, amp_scale=amp, drift_path=drift_path, drift_weight=0.25, shrink_tau=None
     )
 
-    # 5) 저장(RAG 친화)
+    # 5) 저장 파일명 결정
     last_day = pd.to_datetime(raw_df['date'].iloc[-1])
+    if args.asof_date:
+        try:
+            asof_dt = pd.to_datetime(args.asof_date)
+        except Exception:
+            print(f"[경고] --asof_date 파싱 실패: {args.asof_date} → 데이터 마지막 날짜로 대체")
+            asof_dt = last_day
+    else:
+        asof_dt = last_day
+
+    if asof_dt.date() != last_day.date():
+        print(f"[경고] --asof_date({asof_dt.date()}) ≠ 데이터 마지막 날짜({last_day.date()}). "
+              f"예측 기준은 데이터 마지막 날짜를 사용합니다(파일명만 asof 반영).")
+
+    file_stamp = asof_dt.strftime("%Y%m%d")  # 예: 20250903
+
+    # 예측 범위 날짜
     dates = pd.date_range(last_day + pd.Timedelta(days=1), periods=args.horizon, freq='D')
 
-    csv_path = out_dir / "nextday_week_prediction.csv"
+    csv_path = out_dir / f"predicted_{file_stamp}.csv"
     pd.DataFrame({
         "date": dates.strftime("%Y-%m-%d"),
         "predicted": np.asarray(preds_level, dtype=float),
@@ -542,7 +554,7 @@ def main():
         "source": "rag_weekly_predict.py"
     }).to_csv(csv_path, index=False, encoding="utf-8-sig")
 
-    json_path = out_dir / "nextday_week_prediction.json"
+    json_path = out_dir / f"predicted_{file_stamp}.json"
     meta = {
         "start_date": dates[0].strftime("%Y-%m-%d"),
         "end_date": dates[-1].strftime("%Y-%m-%d"),

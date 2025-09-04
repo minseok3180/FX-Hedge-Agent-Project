@@ -1,8 +1,8 @@
 # main_collector.py
 # 2020-01-01 ~ 2025-09-03 ECOS 정형데이터 + 2025-09-03 환율 관련 뉴스 수집 + YF 일별 데이터 병합
-# 저장 경로:
-#   - fx_data/wide_20200101_20250903.csv  (ECOS + YF 병합 후 최종본)
-#   - news_data/daily_data_20250902.json, news_articles_20250902.csv, news_summary_20250902.csv
+# 저장 경로(루트):
+#   - wide_20200101_20250903.csv
+#   - daily_data_20250902.json, news_articles_20250902.csv, news_summary_20250902.csv
 
 import os
 import json
@@ -28,44 +28,35 @@ except Exception as e:
     raise ImportError("yfinance가 필요합니다. pip install yfinance 후 다시 시도하세요.") from e
 
 ROOT = Path(__file__).resolve().parent
-FX_DIR = ROOT / "fx_data"
-NEWS_DIR = ROOT / "news_data"
-FX_DIR.mkdir(exist_ok=True, parents=True)
-NEWS_DIR.mkdir(exist_ok=True, parents=True)
 
-SPEC_CSV = ROOT / "fx_data" / "series_specs.csv"  # 사양 파일
+# 루트에 그대로 저장
+SPEC_CSV = ROOT / "series_specs.csv"  # 사양 파일
 START = "2020-01-01"
-END   = "2025-09-03"                              # 오늘(가정)
-NEWS_DAY = dt.date(2025, 9, 2)                   # 전날 뉴스 수집 
+END   = "2025-09-03"                  # 오늘(가정)
+NEWS_DAY = dt.date(2025, 9, 2)        # 전날 뉴스 수집
 
 # =========================
 # YF 기본 티커 매핑(접두어)
 # =========================
 DEFAULT_YF_TICKERS: Dict[str, str] = {
-    # FX
     "KRW=X": "usdkrw",
     "JPY=X": "usdjpy",
     "CNY=X": "usdcny",
     "EURUSD=X": "eurusd",
-    # US equity indices
     "^GSPC": "spx",
     "^DJI": "dji",
     "^IXIC": "ndx",
     "^RUT": "rut",
-    # Rates (CBOE yields)
-    "^TNX": "us10y",   # 10Y
-    "^FVX": "us5y",    # 5Y
-    "^IRX": "us3m",    # 3M
-    # Dollar / Vol
+    "^TNX": "us10y",
+    "^FVX": "us5y",
+    "^IRX": "us3m",
     "DX-Y.NYB": "dxy",
     "^VIX": "vix",
-    # Commodities
     "GC=F": "gold",
     "CL=F": "wti",
     "SI=F": "silver",
     "HG=F": "copper",
 }
-
 
 # =========================
 # ECOS → 일일 와이드 CSV 생성
@@ -102,10 +93,9 @@ def collect_ecos_to_daily(spec_csv: Path, start: str, end: str) -> Path:
     )
     wide["date"] = wide["date"].dt.strftime("%Y-%m-%d")
 
-    out_csv = FX_DIR / f"wide_{start.replace('-','')}_{end.replace('-','')}.csv"
+    out_csv = ROOT / f"wide_{start.replace('-','')}_{end.replace('-','')}.csv"
     wide.to_csv(out_csv, index=False, encoding="utf-8-sig")
     return out_csv
-
 
 # =========================
 # YF 수집 유틸
@@ -132,7 +122,6 @@ def _fetch_one_ticker_daily(ticker: str, prefix: str, start: str, end: str) -> p
         "Dividends": f"{prefix}_dividends",
         "Stock Splits": f"{prefix}_stock_splits",
     }
-    # 존재하는 열만 리네임
     rename_map = {k: v for k, v in rename_map.items() if k in hist.columns}
     hist = hist.rename(columns=rename_map)
 
@@ -165,7 +154,6 @@ def _fetch_one_ticker_daily(ticker: str, prefix: str, start: str, end: str) -> p
     hist["date"] = hist["date"].dt.strftime("%Y-%m-%d")
     return hist
 
-
 def collect_yf_bundle(start: str, end: str,
                       tickers: Dict[str, str],
                       skip_errors: bool = True) -> pd.DataFrame:
@@ -194,12 +182,11 @@ def collect_yf_bundle(start: str, end: str,
 
     return out
 
-
 # =========================
 # 뉴스 하루치 수집
 # =========================
 def collect_news_for(date_obj: dt.date):
-    """하루치 환율 관련 뉴스 수집 후 표준 파일명으로 저장."""
+    """하루치 환율 관련 뉴스 수집 후 표준 파일명으로 저장(루트)."""
     dc = DataCollector()
     parsed, saved = dc.collect_daily_data(
         date_obj,
@@ -209,7 +196,7 @@ def collect_news_for(date_obj: dt.date):
     ds = date_obj.strftime("%Y%m%d")
 
     # JSON 저장
-    (NEWS_DIR / f"daily_data_{ds}.json").write_text(
+    (ROOT / f"daily_data_{ds}.json").write_text(
         json.dumps(parsed, ensure_ascii=False, indent=2),
         encoding="utf-8"
     )
@@ -218,7 +205,7 @@ def collect_news_for(date_obj: dt.date):
     arts = parsed.get("news_articles", [])
     if isinstance(arts, list) and len(arts) > 0:
         pd.DataFrame(arts).to_csv(
-            NEWS_DIR / f"news_articles_{ds}.csv",
+            ROOT / f"news_articles_{ds}.csv",
             index=False,
             encoding="utf-8-sig"
         )
@@ -229,13 +216,12 @@ def collect_news_for(date_obj: dt.date):
         pd.DataFrame(
             [{"date": date_obj.strftime("%Y-%m-%d"), **summ}]
         ).to_csv(
-            NEWS_DIR / f"news_summary_{ds}.csv",
+            ROOT / f"news_summary_{ds}.csv",
             index=False,
             encoding="utf-8-sig"
         )
 
     return parsed
-
 
 # =========================
 # 메인
@@ -273,8 +259,7 @@ def main():
 
     print("[3/3] 뉴스 수집 시작")
     _ = collect_news_for(NEWS_DAY)
-    print(f"비정형데이터 저장 경로: {NEWS_DIR}")
-
+    print(f"비정형데이터 저장 경로: {ROOT}")
 
 if __name__ == "__main__":
     main()
