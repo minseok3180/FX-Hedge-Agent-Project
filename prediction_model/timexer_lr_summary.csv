@@ -1,2 +1,0 @@
-MSE,MAE,RMSE,DirAcc,prediction_days,model
-355.27813868728316,13.333066510153062,18.84882327062576,0.4666666666666667,31,"TimeXer (LR target, attn, AR15x0.90, lag-exog, bias/scale+drift)"

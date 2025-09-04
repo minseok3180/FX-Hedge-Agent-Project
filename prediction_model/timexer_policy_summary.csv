@@ -1,2 +1,0 @@
-MSE,MAE,RMSE,DirAcc,prediction_days,model
-2185.6593846153555,42.384430284196206,46.751036187611454,0.23333333333333334,31,"TimeXer (daily-only exog, resid+EMA, attn, AR15x0.6, lag-exog)"
