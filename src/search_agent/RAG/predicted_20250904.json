@@ -1,0 +1,112 @@
+{
+  "start_date": "2025-09-05",
+  "end_date": "2025-09-11",
+  "horizon_days": 7,
+  "predicted": [
+    {
+      "date": "2025-09-05",
+      "predicted": 1392.3417622279114,
+      "predicted_lr": -0.0010467794029815254
+    },
+    {
+      "date": "2025-09-06",
+      "predicted": 1391.0685897654262,
+      "predicted_lr": -0.0009148292132836779
+    },
+    {
+      "date": "2025-09-07",
+      "predicted": 1392.8132754354513,
+      "predicted_lr": 0.0012534194932992463
+    },
+    {
+      "date": "2025-09-08",
+      "predicted": 1388.1415189294655,
+      "predicted_lr": -0.0033598251292557726
+    },
+    {
+      "date": "2025-09-09",
+      "predicted": 1389.4233616566721,
+      "predicted_lr": 0.0009229975704033467
+    },
+    {
+      "date": "2025-09-10",
+      "predicted": 1391.306215647359,
+      "predicted_lr": 0.0013542160257522852
+    },
+    {
+      "date": "2025-09-11",
+      "predicted": 1384.8522044947763,
+      "predicted_lr": -0.004649606977114678
+    }
+  ],
+  "exogenous_used": [
+    "market",
+    "usdcny_adj_close",
+    "usdcny_close",
+    "usdcny_high",
+    "usdcny_low",
+    "usdcny_lr",
+    "usdcny_open",
+    "usdcny_range",
+    "usdcny_spread",
+    "usdjpy_adj_close",
+    "usdjpy_close",
+    "usdjpy_high",
+    "usdjpy_low",
+    "usdjpy_lr",
+    "usdjpy_open",
+    "usdjpy_range",
+    "usdjpy_spread",
+    "usdkrw_adj_close",
+    "usdkrw_close",
+    "usdkrw_high",
+    "usdkrw_low",
+    "usdkrw_lr",
+    "usdkrw_open",
+    "usdkrw_range",
+    "usdkrw_spread",
+    "UUP_close",
+    "UUP_lr",
+    "^TNX_close",
+    "^TNX_lr",
+    "^VIX_close",
+    "^VIX_lr",
+    "lr_ema10",
+    "dow_sin",
+    "dow_cos",
+    "eom",
+    "lvl_z20",
+    "lvl_rsi14",
+    "lr_ma5",
+    "lr_ma10",
+    "lr_vol10",
+    "lr_ema3",
+    "lr_vol20",
+    "lvl_mom5",
+    "lvl_z60",
+    "rstd_lag1",
+    "rstd_lag2",
+    "rstd_lag3",
+    "rstd_lag4",
+    "rstd_lag5",
+    "rstd_lag6",
+    "rstd_lag7",
+    "rstd_lag8",
+    "rstd_lag9",
+    "rstd_lag10",
+    "rstd_lag11",
+    "rstd_lag12",
+    "rstd_lag13",
+    "rstd_lag14",
+    "rstd_lag15"
+  ],
+  "exo_policy": "weekday_cycle(last7)",
+  "bias_correction": {
+    "bias": -3.6971952489235835e-05,
+    "amp_scale": 2.5
+  },
+  "drift": {
+    "type": "ema10",
+    "weight": 0.25
+  }
+}

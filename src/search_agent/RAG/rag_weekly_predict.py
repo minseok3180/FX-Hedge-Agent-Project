@@ -11,15 +11,15 @@ RAG 주입용 USD/KRW 주간(7일) 예측 스크립트
 - tail 기반 bias/amp 보정 + EMA10 drift 혼합
 
 Usage:
-  # 기준일(as-of) = 2025-09-03 → 파일명: predicted_20250903.csv / .json
+  # 기준일(as-of) = 2025-09-04 → 파일명: predicted_20250904.csv / .json
   # 저장 위치: 기본값은 이 파이썬 파일이 있는 폴더
   python rag_weekly_predict.py \
-    --fx fx_data/wide_20200101_20250903.csv \
+    --fx wide_20200101_20250904.csv \
     --target_col "usdkrw(target)" \
     --use_yahoo 1 \
     --horizon 7 \
     --seq_len 90 \
-    --asof_date 2025-09-03
+    --asof_date 2025-09-04
 """
 
 import argparse, json, warnings
@@ -368,7 +368,7 @@ def train_model(model, X_seq, y_std, X_exo_future,
         for t in range(pred_len):
             endo = cur[:, :, 0:1]
             exog = cur[:, :, 1:] if cur.size(-1)>1 else cur[:, :, 0:1]
-            out = model(endo, exo)
+            out = model(endo, exog)
             preds.append(out)
 
             use_truth = (torch.rand(Xt.size(0), device=device) < p_tf).float().unsqueeze(1)
@@ -541,7 +541,7 @@ def main():
         print(f"[경고] --asof_date({asof_dt.date()}) ≠ 데이터 마지막 날짜({last_day.date()}). "
               f"예측 기준은 데이터 마지막 날짜를 사용합니다(파일명만 asof 반영).")
 
-    file_stamp = asof_dt.strftime("%Y%m%d")  # 예: 20250903
+    file_stamp = asof_dt.strftime("%Y%m%d")  # 예: 20250904
 
     # 예측 범위 날짜
     dates = pd.date_range(last_day + pd.Timedelta(days=1), periods=args.horizon, freq='D')
