@@ -1,3 +1,257 @@
-# 데이터는 별도로 구글드라이브에서 관리하는걸로
-# 혹은 파이프라인상 자동으로 수집되는 것이 좋긴 함.
+# ==========================================
+# 외환 헷지전략 에이전트 프로젝트 .gitignore
+# ==========================================
+
+# 데이터 디렉토리 (민감한 금융 데이터)
 data/
+*.csv
+*.json
+*.jsonl
+*.xlsx
+*.xls
+*.parquet
+*.feather
+
+# 가상환경
+fx_hedge_env/
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Python 캐시 파일
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+*.log
+*.swp
+*.swo
+*~
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# Hugging Face 모델 캐시
+.cache/
+huggingface/
+transformers_cache/
+
+# ML 모델 파일
+*.pth
+*.pt
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+*.model
+*.weights
+*.bin
+*.safetensors
+
+# 로그 파일
+logs/
+*.log
+*.out
+*.err
+
+# 임시 파일
+tmp/
+temp/
+.tmp/
+.temp/
+
+# 데이터베이스 파일
+*.db
+*.sqlite
+*.sqlite3
+chromadb/
+
+# 설정 파일 (민감한 정보 포함)
+config.ini
+secrets.json
+api_keys.json
+.env.local
+.env.production
+.env.staging
+
+# 백업 파일
+*.bak
+*.backup
+*.old
+*.orig
+
+# 압축 파일
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# 이미지 및 미디어 (필요시 제외)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.svg
+*.mp4
+*.avi
+*.mov
+
+# 문서 파일 (필요시 제외)
+*.pdf
+*.doc
+*.docx
+*.ppt
+*.pptx
+
+# 실행 파일
+*.exe
+*.dll
+*.so
+*.dylib
+
+# 기타
+node_modules/
+.npm
+.yarn-integrity
+package-lock.json
+yarn.lock

@@ -66,3 +66,6 @@ cryptography>=41.0.0
 
 # 성능 최적화
 uvloop>=0.17.0  # Linux/macOS에서 asyncio 성능 향상
+
+# 해시 함수 (ChromaDB 등에서 사용)
+xxhash>=3.5.0
