@@ -1,4 +1,5 @@
 """Supervisor - 멀티 에이전트 오케스트레이터"""
+import os
 import json
 from typing import Dict, Any, Optional
 from openai import OpenAI
@@ -6,6 +7,12 @@ from src.config.settings import settings
 from src.agents.web_search_agent import WebSearchAgent
 from src.agents.rag_agent import RAGAgent
 from src.prompts.supervisor_prompt import SUPERVISOR_SYSTEM_PROMPT, SUPERVISOR_USER_PROMPT_TEMPLATE
+
+# LangSmith tracing 설정
+if settings.langsmith_tracing and settings.langsmith_api_key:
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+    os.environ["LANGSMITH_TRACING"] = "true"
 
 
 class Supervisor:

@@ -38,6 +38,18 @@ class QdrantTool:
             검색 결과 리스트
         """
         try:
+            # 컬렉션 존재 여부 확인
+            try:
+                collections = self.client.get_collections().collections
+                collection_names = [col.name for col in collections]
+                
+                if self.collection_name not in collection_names:
+                    # 컬렉션이 없으면 빈 리스트 반환 (에러 없이)
+                    return []
+            except Exception:
+                # 컬렉션 확인 실패 시에도 계속 진행 (검색 시 에러 처리)
+                pass
+            
             results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_vector,
@@ -52,8 +64,8 @@ class QdrantTool:
                 }
                 for result in results
             ]
-        except Exception as e:
-            print(f"Qdrant 검색 에러: {e}")
+        except Exception:
+            # 모든 에러를 무시하고 빈 리스트 반환
             return []
     
     async def create_collection(self, vector_size: int = 384):

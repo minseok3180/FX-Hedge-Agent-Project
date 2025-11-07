@@ -1,8 +1,15 @@
 """기본 에이전트 클래스"""
+import os
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from openai import OpenAI
 from src.config.settings import settings
+
+# LangSmith tracing 설정
+if settings.langsmith_tracing and settings.langsmith_api_key:
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+    os.environ["LANGSMITH_TRACING"] = "true"
 
 
 class BaseAgent(ABC):
