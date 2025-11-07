@@ -1,5 +1,7 @@
 """데이터베이스 쿼리 도구"""
 import pymysql
+import json
+from datetime import date, datetime
 from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 
@@ -29,6 +31,16 @@ class DatabaseTool:
             )
         return self.connection
     
+    def _serialize_value(self, value: Any) -> Any:
+        """날짜/시간 객체를 JSON 직렬화 가능한 형태로 변환"""
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        return value
+    
+    def _serialize_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """행의 모든 값을 JSON 직렬화 가능한 형태로 변환"""
+        return {k: self._serialize_value(v) for k, v in row.items()}
+    
     async def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
         """
         SQL 쿼리 실행
@@ -49,7 +61,8 @@ class DatabaseTool:
                     cursor.execute(query)
                 
                 results = cursor.fetchall()
-                return list(results)
+                # 날짜/시간 객체를 문자열로 변환
+                return [self._serialize_row(row) for row in results]
         except Exception as e:
             print(f"데이터베이스 쿼리 에러: {e}")
             return []
@@ -66,6 +79,73 @@ class DatabaseTool:
         """
         query = f"DESCRIBE {table_name}"
         return await self.execute_query(query)
+    
+    async def get_exchange_rate_by_date(self, date: str) -> List[Dict[str, Any]]:
+        """
+        특정 일자의 환율 정보 조회
+        
+        Args:
+            date: 날짜 (YYYY-MM-DD 형식)
+            
+        Returns:
+            환율 정보 리스트
+        """
+        query = """
+        SELECT 
+            date, usdkrw, us_ex, us_im, reserve, us_reserve, us_export, us_import,
+            base, market, consumer, exp_rate, im_rate, us_current, us_growth, 
+            us_gdp, us_stock, us_interest
+        FROM eiExchangeRate
+        WHERE date = %s
+        ORDER BY date DESC
+        LIMIT 1
+        """
+        return await self.execute_query(query, (date,))
+    
+    async def get_exchange_rate_range(self, start_date: str, end_date: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        날짜 범위의 환율 정보 조회
+        
+        Args:
+            start_date: 시작 날짜 (YYYY-MM-DD 형식)
+            end_date: 종료 날짜 (YYYY-MM-DD 형식)
+            limit: 최대 조회 개수
+            
+        Returns:
+            환율 정보 리스트
+        """
+        query = """
+        SELECT 
+            date, usdkrw, us_ex, us_im, reserve, us_reserve, us_export, us_import,
+            base, market, consumer, exp_rate, im_rate, us_current, us_growth, 
+            us_gdp, us_stock, us_interest
+        FROM eiExchangeRate
+        WHERE date BETWEEN %s AND %s
+        ORDER BY date DESC
+        LIMIT %s
+        """
+        return await self.execute_query(query, (start_date, end_date, limit))
+    
+    async def get_latest_exchange_rate(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        최신 환율 정보 조회
+        
+        Args:
+            limit: 조회할 최신 데이터 개수
+            
+        Returns:
+            환율 정보 리스트
+        """
+        query = """
+        SELECT 
+            date, usdkrw, us_ex, us_im, reserve, us_reserve, us_export, us_import,
+            base, market, consumer, exp_rate, im_rate, us_current, us_growth, 
+            us_gdp, us_stock, us_interest
+        FROM eiExchangeRate
+        ORDER BY date DESC
+        LIMIT %s
+        """
+        return await self.execute_query(query, (limit,))
     
     def close(self):
         """데이터베이스 연결 종료"""

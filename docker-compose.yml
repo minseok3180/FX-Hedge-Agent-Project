@@ -19,6 +19,9 @@ services:
         - QDRANT_API_KEY=${QDRANT_API_KEY}
         - WEB_SEARCH_API_KEY=${WEB_SEARCH_API_KEY}
         - WEB_SEARCH_ENGINE_ID=${WEB_SEARCH_ENGINE_ID}
+        - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+        - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-fx-hedge-agent}
+        - LANGSMITH_TRACING=${LANGSMITH_TRACING:-true}
         - API_HOST=${API_HOST:-0.0.0.0}
         - API_PORT=${API_PORT:-8000}
     container_name: fx_hedge_api
@@ -37,6 +40,9 @@ services:
       - QDRANT_API_KEY=${QDRANT_API_KEY}
       - WEB_SEARCH_API_KEY=${WEB_SEARCH_API_KEY}
       - WEB_SEARCH_ENGINE_ID=${WEB_SEARCH_ENGINE_ID}
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-fx-hedge-agent}
+      - LANGSMITH_TRACING=${LANGSMITH_TRACING:-true}
       - API_HOST=${API_HOST:-0.0.0.0}
       - API_PORT=${API_PORT:-8000}
     depends_on:

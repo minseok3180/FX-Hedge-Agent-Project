@@ -43,6 +43,13 @@ class WebSearchConfig(BaseModel):
     engine_id: Optional[str] = None
 
 
+class LangSmithConfig(BaseModel):
+    """LangSmith 설정"""
+    api_key: Optional[str] = None
+    project: str = "fx-hedge-agent"
+    tracing: str = "true"
+
+
 class Settings(BaseModel):
     """애플리케이션 설정"""
     openai: OpenAIConfig
@@ -50,6 +57,7 @@ class Settings(BaseModel):
     qdrant: QdrantConfig
     api: APIConfig
     web_search: WebSearchConfig
+    langsmith: LangSmithConfig
 
 
 def _resolve_env_vars(value: Any) -> Any:
@@ -72,9 +80,6 @@ def _resolve_env_vars(value: Any) -> Any:
         
         result = re.sub(pattern, replace, value)
         
-        # 숫자로 변환 가능하면 변환
-        if result and result.strip().isdigit():
-            return int(result)
         # 빈 문자열이면 None 반환 (Optional 필드용)
         if result == "":
             return None
@@ -104,6 +109,14 @@ def load_settings() -> Settings:
     
     # 환경 변수 해석
     resolved_config = _resolve_env_vars(config_data)
+    
+    # 숫자 필드 변환 (port 등)
+    if "database" in resolved_config and "port" in resolved_config["database"]:
+        resolved_config["database"]["port"] = int(resolved_config["database"]["port"])
+    if "qdrant" in resolved_config and "port" in resolved_config["qdrant"]:
+        resolved_config["qdrant"]["port"] = int(resolved_config["qdrant"]["port"])
+    if "api" in resolved_config and "port" in resolved_config["api"]:
+        resolved_config["api"]["port"] = int(resolved_config["api"]["port"])
     
     # Settings 객체 생성
     return Settings(**resolved_config)
@@ -178,6 +191,18 @@ class SettingsWrapper:
     @property
     def web_search_engine_id(self) -> Optional[str]:
         return self._settings.web_search.engine_id
+    
+    @property
+    def langsmith_api_key(self) -> Optional[str]:
+        return self._settings.langsmith.api_key
+    
+    @property
+    def langsmith_project(self) -> str:
+        return self._settings.langsmith.project
+    
+    @property
+    def langsmith_tracing(self) -> bool:
+        return self._settings.langsmith.tracing.lower() == "true"
 
 
 # 전역 설정 인스턴스 (하위 호환성을 위해 래퍼 사용)

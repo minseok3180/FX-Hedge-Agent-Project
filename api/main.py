@@ -1,10 +1,17 @@
 """FastAPI 메인 애플리케이션"""
+import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from src.config.settings import settings
 from src.supervisor.supervisor import Supervisor
+
+# LangSmith tracing 설정 (애플리케이션 시작 시 초기화)
+if settings.langsmith_tracing and settings.langsmith_api_key:
+    os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
+    os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
+    os.environ["LANGSMITH_TRACING"] = "true"
 
 # FastAPI 앱 초기화
 app = FastAPI(
@@ -74,7 +81,9 @@ async def chat(request: ChatRequest):
         result = await supervisor.route_task(request.message)
         
         if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result.get("error", "알 수 없는 에러"))
+            error_msg = result.get("error", "알 수 없는 에러")
+            print(f"Supervisor 에러: {error_msg}")  # 디버깅용
+            raise HTTPException(status_code=500, detail=error_msg if error_msg else "알 수 없는 에러")
         
         return ChatResponse(
             answer=result.get("answer", ""),
@@ -85,7 +94,12 @@ async def chat(request: ChatRequest):
                 "status": result.get("status")
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"API 에러: {str(e)}\n{error_trace}")  # 디버깅용
         raise HTTPException(status_code=500, detail=str(e))
 
 

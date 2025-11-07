@@ -24,6 +24,11 @@
   "web_search": {
     "api_key": "${WEB_SEARCH_API_KEY:-}",
     "engine_id": "${WEB_SEARCH_ENGINE_ID:-}"
+  },
+  "langsmith": {
+    "api_key": "${LANGSMITH_API_KEY:-}",
+    "project": "${LANGSMITH_PROJECT:-fx-hedge-agent}",
+    "tracing": "${LANGSMITH_TRACING:-true}"
   }
 }
 
