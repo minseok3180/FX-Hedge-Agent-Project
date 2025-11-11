@@ -22,7 +22,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+.venv/
 # 환경 변수
 .env
 .env.local
