@@ -1,7 +1,7 @@
 # FastAPI 및 웹 서버
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
+pydantic==2.10.6
 pydantic-settings==2.1.0
 
 # OpenAI
@@ -12,14 +12,23 @@ pymysql==1.1.0
 cryptography==41.0.7
 
 # 벡터 데이터베이스
-qdrant-client==1.7.0
+qdrant-client==1.9.0
 
 # HTTP 요청
-requests==2.31.0
+requests==2.32.3
 
 # 유틸리티
 python-dotenv==1.0.0
 
 # LangSmith
 langsmith==0.0.87
+
+pymupdf==1.24.9
+trafilatura==1.7.0
+beautifulsoup4==4.12.3
+lxml==5.2.2
+tiktoken==0.7.0
+
+# 수치 계산
+numpy==2.1.1
 

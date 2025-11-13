@@ -109,7 +109,7 @@ async def direct_agent_call(agent_name: str, request: ChatRequest):
     특정 에이전트에 직접 요청
     
     Args:
-        agent_name: 에이전트 이름 (web_search_agent, rag_agent)
+        agent_name: 에이전트 이름 (web_search_agent, rag_agent, docs_agent)
         request: 채팅 요청
     """
     try:

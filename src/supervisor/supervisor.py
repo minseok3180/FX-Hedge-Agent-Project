@@ -6,6 +6,7 @@ from openai import OpenAI
 from src.config.settings import settings
 from src.agents.web_search_agent import WebSearchAgent
 from src.agents.rag_agent import RAGAgent
+from src.agents.docs_agent import DocsAgent
 from src.prompts.supervisor_prompt import SUPERVISOR_SYSTEM_PROMPT, SUPERVISOR_USER_PROMPT_TEMPLATE
 
 # LangSmith tracing 설정
@@ -25,7 +26,8 @@ class Supervisor:
         # 하위 에이전트 초기화
         self.agents = {
             "web_search_agent": WebSearchAgent(),
-            "rag_agent": RAGAgent()
+            "rag_agent": RAGAgent(),
+            "docs_agent": DocsAgent(),
         }
     
     async def route_task(self, user_query: str) -> Dict[str, Any]:

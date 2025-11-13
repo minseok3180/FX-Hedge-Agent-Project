@@ -51,6 +51,8 @@ services:
     volumes:
       - ./src:/app/src
       - ./api:/app/api
+      - ./scripts:/app/scripts
+      - ./data:/app/data   
       - ./config.json:/app/config.json
     networks:
       - fx_hedge_network
