@@ -27,12 +27,23 @@ class WebSearchAgent(BaseAgent):
         Returns:
             검색 및 분석 결과
         """
+        self.logger.info(
+            f"🔍 웹 검색 에이전트 실행 시작",
+            {"task": task, "has_context": context is not None}
+        )
+        
         try:
             # 1. 검색 쿼리 생성 (간단하게 task를 그대로 사용)
             search_query = task
+            self.logger.debug(f"🔎 검색 쿼리: {search_query}")
             
             # 2. 웹 검색 수행
+            self.logger.info("🌐 웹 검색 수행 중...")
             search_results = await self.web_search_tool.search(search_query, num_results=5)
+            self.logger.info(
+                f"✅ 웹 검색 완료",
+                {"results_count": len(search_results)}
+            )
             
             # 3. 검색 결과를 텍스트로 변환
             results_text = "\n\n".join([
@@ -41,6 +52,7 @@ class WebSearchAgent(BaseAgent):
             ])
             
             # 4. LLM을 통해 검색 결과 분석 및 답변 생성
+            self.logger.info("🤖 검색 결과 분석 중 (LLM 호출)...")
             messages = [
                 {"role": "system", "content": WEB_SEARCH_SYSTEM_PROMPT},
                 {
@@ -54,6 +66,14 @@ class WebSearchAgent(BaseAgent):
             
             answer = await self._call_llm(messages, temperature=0.7)
             
+            self.logger.info(
+                f"✅ 웹 검색 에이전트 실행 완료",
+                {
+                    "answer_length": len(answer),
+                    "search_results_count": len(search_results)
+                }
+            )
+            
             return {
                 "agent": self.name,
                 "task": task,
@@ -63,6 +83,11 @@ class WebSearchAgent(BaseAgent):
                 "status": "success"
             }
         except Exception as e:
+            self.logger.error(
+                f"❌ 웹 검색 에이전트 실행 실패",
+                {"task": task, "error": str(e)},
+                exc_info=True
+            )
             return {
                 "agent": self.name,
                 "task": task,

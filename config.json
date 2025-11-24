@@ -11,7 +11,8 @@
     "name": "${DB_NAME}"
   },
   "qdrant": {
-    "host": "${QDRANT_HOST}",
+    "url": "${QDRANT_URL:-}",
+    "host": "${QDRANT_HOST:-}",
     "port": "${QDRANT_PORT:-6333}",
     "api_key": "${QDRANT_API_KEY:-}"
   },

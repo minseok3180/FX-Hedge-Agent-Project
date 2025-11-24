@@ -32,9 +32,19 @@ class RAGAgent(BaseAgent):
         Returns:
             쿼리 및 RAG 결과
         """
+        self.logger.info(
+            f"📊 RAG 에이전트 실행 시작",
+            {"task": task, "has_context": context is not None}
+        )
+        
         try:
             # 1. 날짜 정보 추출 및 적절한 데이터베이스 메서드 선택
+            self.logger.debug("🔍 데이터베이스 쿼리 준비 중...")
             db_results = await self._query_exchange_rate_data(task)
+            self.logger.info(
+                f"✅ 데이터베이스 쿼리 완료",
+                {"results_count": len(db_results) if db_results else 0}
+            )
             
             # 2. Qdrant 벡터 검색 (사용 안 함 - 주석처리)
             # vector_results = await self._perform_vector_search(task)
@@ -42,8 +52,10 @@ class RAGAgent(BaseAgent):
             
             # 3. 결과를 텍스트로 변환
             db_results_text = json.dumps(db_results, ensure_ascii=False, indent=2) if db_results else "조회된 데이터가 없습니다."
+            self.logger.debug(f"📝 결과 텍스트 변환 완료 (길이: {len(db_results_text)})")
             
             # 4. LLM을 통해 최종 답변 생성
+            self.logger.info("🤖 RAG 답변 생성 중 (LLM 호출)...")
             messages = [
                 {"role": "system", "content": RAG_SYSTEM_PROMPT},
                 {
@@ -57,6 +69,14 @@ class RAGAgent(BaseAgent):
             
             answer = await self._call_llm(messages, temperature=0.7)
             
+            self.logger.info(
+                f"✅ RAG 에이전트 실행 완료",
+                {
+                    "answer_length": len(answer),
+                    "db_results_count": len(db_results) if db_results else 0
+                }
+            )
+            
             return {
                 "agent": self.name,
                 "task": task,
@@ -66,6 +86,11 @@ class RAGAgent(BaseAgent):
                 "status": "success"
             }
         except Exception as e:
+            self.logger.error(
+                f"❌ RAG 에이전트 실행 실패",
+                {"task": task, "error": str(e)},
+                exc_info=True
+            )
             return {
                 "agent": self.name,
                 "task": task,
