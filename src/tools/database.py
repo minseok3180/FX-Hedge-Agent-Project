@@ -6,6 +6,31 @@ from typing import List, Dict, Any, Optional
 from src.config.settings import settings
 
 
+SELECT_COLUMNS = """
+        date,
+        usdkrw,
+        `미국수출금액`,
+        `미국수입금액`,
+        `외환보유액`,
+        `미국외환보유액`,
+        `한국은행기준금리`,
+        `시장금리`,
+        `소비자물가지수`,
+        `수출물가지수`,
+        `수입물가지수`,
+        NULL AS us_current,
+        `미국경제성장률`,
+        `us_gdp`,
+        `미국주가지수`,
+        `미국금리`,
+        `정부대출금금리`,
+        `경제성장률`,
+        `gdp`,
+        `주가지수`,
+        `한국금리`
+"""
+
+
 class DatabaseTool:
     """MariaDB 데이터베이스 쿼리 도구"""
     
@@ -90,11 +115,9 @@ class DatabaseTool:
         Returns:
             환율 정보 리스트
         """
-        query = """
+        query = f"""
         SELECT 
-            date, usdkrw, us_ex, us_im, reserve, us_reserve, us_export, us_import,
-            base, market, consumer, exp_rate, im_rate, us_current, us_growth, 
-            us_gdp, us_stock, us_interest
+            {SELECT_COLUMNS}
         FROM eiExchangeRate
         WHERE date = %s
         ORDER BY date DESC
@@ -114,11 +137,9 @@ class DatabaseTool:
         Returns:
             환율 정보 리스트
         """
-        query = """
+        query = f"""
         SELECT 
-            date, usdkrw, us_ex, us_im, reserve, us_reserve, us_export, us_import,
-            base, market, consumer, exp_rate, im_rate, us_current, us_growth, 
-            us_gdp, us_stock, us_interest
+            {SELECT_COLUMNS}
         FROM eiExchangeRate
         WHERE date BETWEEN %s AND %s
         ORDER BY date DESC
@@ -136,11 +157,9 @@ class DatabaseTool:
         Returns:
             환율 정보 리스트
         """
-        query = """
+        query = f"""
         SELECT 
-            date, usdkrw, us_ex, us_im, reserve, us_reserve, us_export, us_import,
-            base, market, consumer, exp_rate, im_rate, us_current, us_growth, 
-            us_gdp, us_stock, us_interest
+            {SELECT_COLUMNS}
         FROM eiExchangeRate
         ORDER BY date DESC
         LIMIT %s
