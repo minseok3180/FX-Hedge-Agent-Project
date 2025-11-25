@@ -17,7 +17,7 @@ except ImportError:
     LANGSMITH_AVAILABLE = False
     traceable = lambda **kwargs: lambda func: func
 
-from src.config.settings import settings
+from src.utils.settings import settings
 
 
 class LogLevel(Enum):
@@ -92,13 +92,8 @@ class LangSmithLogger:
         level_str = f"{self._get_color(level)}{ColorCode.BOLD}[{level.value}]{ColorCode.RESET}"
         name_str = f"{ColorCode.BLUE}[{self.name}]{ColorCode.RESET}"
         
-        msg_parts = [f"{timestamp} {level_str} {name_str} {message}"]
-        
-        if metadata:
-            metadata_str = json.dumps(metadata, ensure_ascii=False, indent=2)
-            msg_parts.append(f"\n{ColorCode.CYAN}Metadata:{ColorCode.RESET}\n{metadata_str}")
-        
-        return "\n".join(msg_parts)
+        # 메시지만 출력 (metadata는 LangSmith에만 전송)
+        return f"{timestamp} {level_str} {name_str} {message}"
     
     def _print_log(self, level: LogLevel, message: str, metadata: Optional[Dict[str, Any]] = None):
         """터미널에 로그 출력"""

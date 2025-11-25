@@ -1,7 +1,7 @@
 """웹 검색 도구"""
 import requests
 from typing import List, Dict, Any
-from src.config.settings import settings
+from src.utils.settings import settings
 
 
 class WebSearchTool:

@@ -55,6 +55,6 @@ ENV WEB_SEARCH_ENGINE_ID=${WEB_SEARCH_ENGINE_ID}
 ENV API_HOST=${API_HOST}
 ENV API_PORT=${API_PORT}
 
-# FastAPI 실행
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# FastAPI 실행 (access log 활성화)
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
 

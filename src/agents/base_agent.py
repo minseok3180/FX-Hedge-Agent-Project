@@ -3,7 +3,7 @@ import os
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional
 from openai import OpenAI
-from src.config.settings import settings
+from src.utils.settings import settings
 from src.utils.logger import get_logger
 from src.utils.openai_tracer import TracedOpenAIClient
 

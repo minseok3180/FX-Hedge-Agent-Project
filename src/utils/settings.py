@@ -213,3 +213,4 @@ class SettingsWrapper:
 # 전역 설정 인스턴스 (하위 호환성을 위해 래퍼 사용)
 _settings_instance = load_settings()
 settings = SettingsWrapper(_settings_instance)
+

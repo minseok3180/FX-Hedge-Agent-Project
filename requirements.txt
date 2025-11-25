@@ -22,4 +22,5 @@ python-dotenv==1.0.0
 
 # LangSmith
 langsmith==0.0.87
+langchain-openai>=0.1.0
 

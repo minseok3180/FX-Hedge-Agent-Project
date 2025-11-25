@@ -17,17 +17,8 @@ class TracingMiddleware(BaseHTTPMiddleware):
         request_id = str(uuid.uuid4())
         start_time = time.time()
         
-        # 요청 정보 로깅
-        logger.info(
-            f"📥 요청 수신: {request.method} {request.url.path}",
-            {
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "query_params": dict(request.query_params),
-                "client_host": request.client.host if request.client else None,
-            }
-        )
+        # 요청 정보 로깅 (metadata 없이 간단하게)
+        logger.info(f"📥 요청 수신: {request.method} {request.url.path} (ID: {request_id[:8]})")
         
         # 요청 본문 읽기 (POST 요청인 경우)
         body = None
@@ -46,24 +37,17 @@ class TracingMiddleware(BaseHTTPMiddleware):
             try:
                 import json
                 body_json = json.loads(body)
-                logger.debug(f"요청 본문: {body_json}", {"request_id": request_id})
+                logger.debug(f"📝 요청 본문: {json.dumps(body_json, ensure_ascii=False)[:200]}")
             except:
-                logger.debug(f"요청 본문 (텍스트): {body[:200]}...", {"request_id": request_id})
+                logger.debug(f"📝 요청 본문 (텍스트): {body[:200]}...")
         
         try:
             # 다음 미들웨어/엔드포인트 실행
             response = await call_next(request)
             
-            # 응답 정보 로깅
+            # 응답 정보 로깅 (metadata 없이 간단하게)
             elapsed = time.time() - start_time
-            logger.info(
-                f"📤 응답 전송: {request.method} {request.url.path}",
-                {
-                    "request_id": request_id,
-                    "status_code": response.status_code,
-                    "elapsed_time": elapsed,
-                }
-            )
+            logger.info(f"📤 응답 전송: {request.method} {request.url.path} - {response.status_code} ({elapsed:.3f}s)")
             
             # 응답 헤더에 요청 ID 추가
             response.headers["X-Request-ID"] = request_id
@@ -71,14 +55,6 @@ class TracingMiddleware(BaseHTTPMiddleware):
             return response
         except Exception as e:
             elapsed = time.time() - start_time
-            logger.error(
-                f"❌ 요청 처리 실패: {request.method} {request.url.path}",
-                {
-                    "request_id": request_id,
-                    "elapsed_time": elapsed,
-                    "error": str(e)
-                },
-                exc_info=True
-            )
+            logger.error(f"❌ 요청 처리 실패: {request.method} {request.url.path} - {str(e)} ({elapsed:.3f}s)", exc_info=True)
             raise
 

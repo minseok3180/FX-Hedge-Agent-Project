@@ -2,7 +2,7 @@
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
 from typing import List, Dict, Any, Optional
-from src.config.settings import settings
+from src.utils.settings import settings
 from src.utils.logger import get_logger
 
 
