@@ -24,9 +24,10 @@ class DatabaseConfig(BaseModel):
 
 class QdrantConfig(BaseModel):
     """Qdrant 설정"""
-    host: str
-    port: int = 6333
-    api_key: Optional[str] = None
+    url: Optional[str] = None  # GCP Qdrant 전체 URL (예: https://xxx.qdrant.io)
+    host: Optional[str] = None  # 로컬 Qdrant 호스트
+    port: int = 6333  # 로컬 Qdrant 포트
+    api_key: Optional[str] = None  # API 키 (GCP Qdrant 필수)
 
 
 class APIConfig(BaseModel):
@@ -157,7 +158,11 @@ class SettingsWrapper:
         return self._settings.database.name
     
     @property
-    def qdrant_host(self) -> str:
+    def qdrant_url(self) -> Optional[str]:
+        return self._settings.qdrant.url
+    
+    @property
+    def qdrant_host(self) -> Optional[str]:
         return self._settings.qdrant.host
     
     @property
@@ -208,3 +213,4 @@ class SettingsWrapper:
 # 전역 설정 인스턴스 (하위 호환성을 위해 래퍼 사용)
 _settings_instance = load_settings()
 settings = SettingsWrapper(_settings_instance)
+

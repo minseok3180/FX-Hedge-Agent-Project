@@ -37,6 +37,9 @@ wheels/
 # 로그
 *.log
 
+# pdf파일 안올라가게 
+*.pdf
+
 # 데이터베이스
 *.db
 *.sqlite

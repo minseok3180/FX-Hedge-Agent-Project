@@ -1,23 +1,36 @@
 """FastAPI 메인 애플리케이션"""
 import os
+from dataclasses import asdict
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
-from src.config.settings import settings
-from src.supervisor.supervisor import Supervisor
+from typing import Optional, Dict, Any, List
+from src.utils.settings import settings
+from src.agents.supervisor.supervisor import Supervisor
+from src.utils.logger import get_logger
+from src.utils.middleware import TracingMiddleware
+from src.utils.state import StateManager, AdditionalInfo, Reference, Action
+
+# Logger 초기화
+logger = get_logger("fastapi-app")
 
 # LangSmith tracing 설정 (애플리케이션 시작 시 초기화)
 if settings.langsmith_tracing and settings.langsmith_api_key:
     os.environ["LANGSMITH_API_KEY"] = settings.langsmith_api_key
     os.environ["LANGSMITH_PROJECT"] = settings.langsmith_project
     os.environ["LANGSMITH_TRACING"] = "true"
+    logger.info("✅ LangSmith 추적 활성화", {"project": settings.langsmith_project})
+else:
+    logger.warning("⚠️  LangSmith 추적 비활성화 (API 키가 없거나 비활성화됨)")
 
 # FastAPI 앱 초기화
 app = FastAPI(
     title=settings.api_title,
     version=settings.api_version
 )
+
+# 추적 미들웨어 추가 (CORS보다 먼저)
+app.add_middleware(TracingMiddleware)
 
 # CORS 설정
 app.add_middleware(
@@ -29,20 +42,30 @@ app.add_middleware(
 )
 
 # Supervisor 초기화
+logger.info("🚀 Supervisor 초기화 중...")
 supervisor = Supervisor()
+logger.info("✅ Supervisor 초기화 완료")
+
+# State Manager 초기화
+state_manager = StateManager()
+logger.info("✅ StateManager 초기화 완료")
 
 
 # 요청/응답 모델
 class ChatRequest(BaseModel):
     """채팅 요청 모델"""
-    message: str
-    context: Optional[Dict[str, Any]] = None
+    message: str  # 사용자 질의
+    date: str  # 질문하는 날짜 (YYYY-MM-DD)
+    user_id: str  # 사용자 아이디
+    context: Optional[Dict[str, Any]] = None  # 추가 컨텍스트
 
 
 class ChatResponse(BaseModel):
-    """채팅 응답 모델"""
-    answer: str
-    agent: str
+    """채팅 응답 모델 (API 출력물 형태)"""
+    answer: str  # 결과 답변
+    reference: List[Dict[str, Any]] = []  # rdb, vdb에서 참고한 자료
+    action: List[Dict[str, Any]] = []  # agent가 modify한 부분, calculate한 과정 등
+    agent: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
 
@@ -76,17 +99,51 @@ async def chat(request: ChatRequest):
     
     Supervisor가 적절한 에이전트를 선택하여 작업을 수행합니다.
     """
+    logger.info(f"💬 채팅 요청 수신 - user_id: {request.user_id}, date: {request.date}, message: {request.message[:50]}...")
+    
     try:
+        # State 조회 또는 생성
+        state = state_manager.get_state(request.user_id)
+        
         # Supervisor를 통해 작업 라우팅 및 실행
-        result = await supervisor.route_task(request.message)
+        result = await supervisor.route_task(
+            user_query=request.message,
+            user_id=request.user_id,
+            date=request.date,
+            state=state
+        )
         
         if result.get("status") == "error":
             error_msg = result.get("error", "알 수 없는 에러")
-            print(f"Supervisor 에러: {error_msg}")  # 디버깅용
+            logger.error(f"❌ Supervisor 에러: {error_msg}", {"error": error_msg})
             raise HTTPException(status_code=500, detail=error_msg if error_msg else "알 수 없는 에러")
         
+        # AdditionalInfo 추출
+        additional_info = result.get("additional_info")
+        if not additional_info:
+            # 기본값 생성
+            additional_info = AdditionalInfo(
+                answer=result.get("answer", ""),
+                reference=[],
+                action=[]
+            )
+        
+        # State에 대화 턴 추가
+        state.add_turn(
+            user_message=request.message,
+            date=request.date,
+            agent_answer=additional_info.answer,
+            additional_info=additional_info
+        )
+        state_manager.save_state(state)
+        
+        logger.info(f"✅ 채팅 응답 생성 완료 - agent: {result.get('agent', 'unknown')}, answer_length: {len(additional_info.answer)}, status: {result.get('status')}")
+        
+        # Response 생성 (API 출력물 형태)
         return ChatResponse(
-            answer=result.get("answer", ""),
+            answer=additional_info.answer,
+            reference=[asdict(ref) for ref in additional_info.reference],
+            action=[asdict(act) for act in additional_info.action],
             agent=result.get("agent", ""),
             metadata={
                 "supervisor_decision": result.get("supervisor_decision"),
@@ -97,9 +154,7 @@ async def chat(request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-        error_trace = traceback.format_exc()
-        print(f"API 에러: {str(e)}\n{error_trace}")  # 디버깅용
+        logger.error(f"❌ API 에러: {str(e)}", {"error": str(e)}, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -112,15 +167,36 @@ async def direct_agent_call(agent_name: str, request: ChatRequest):
         agent_name: 에이전트 이름 (web_search_agent, rag_agent)
         request: 채팅 요청
     """
+    logger.info(
+        f"🎯 직접 에이전트 호출: {agent_name}",
+        {
+            "agent_name": agent_name,
+            "message_length": len(request.message)
+        }
+    )
+    
     try:
         if agent_name not in supervisor.agents:
+            logger.warning(f"⚠️  에이전트를 찾을 수 없음: {agent_name}")
             raise HTTPException(status_code=404, detail=f"에이전트를 찾을 수 없습니다: {agent_name}")
         
         agent = supervisor.agents[agent_name]
         result = await agent.execute(request.message, request.context)
         
         if result.get("status") == "error":
+            logger.error(
+                f"❌ 에이전트 실행 실패: {agent_name}",
+                {"error": result.get("error", "알 수 없는 에러")}
+            )
             raise HTTPException(status_code=500, detail=result.get("error", "알 수 없는 에러"))
+        
+        logger.info(
+            f"✅ 에이전트 실행 완료: {agent_name}",
+            {
+                "agent": result.get("agent", ""),
+                "status": result.get("status")
+            }
+        )
         
         return ChatResponse(
             answer=result.get("answer", ""),
@@ -130,6 +206,7 @@ async def direct_agent_call(agent_name: str, request: ChatRequest):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"❌ 직접 에이전트 호출 에러: {str(e)}", {"error": str(e)}, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
