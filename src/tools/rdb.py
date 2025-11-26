@@ -2,6 +2,7 @@
 import pymysql
 import json
 import re
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from src.utils.settings import settings
 from src.utils.logger import get_logger
@@ -281,39 +282,160 @@ async def rdb_query_hard(
         )
         
         conn = _db_connection._get_connection()
-        with conn.cursor() as cursor:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
+        
+        # 쿼리 실행 전 상세 로깅
+        logger.debug(
+            f"🔍 [QUERY EXECUTION] 쿼리 실행 시작",
+            {
+                "query_key": query_key,
+                "query_preview": query[:200] if len(query) > 200 else query,
+                "query_length": len(query),
+                "has_params": params is not None,
+                "params": str(params) if params else None,
+                "has_state": state is not None,
+                "connection_open": conn.open if hasattr(conn, 'open') else None
+            }
+        )
+        
+        try:
+            with conn.cursor() as cursor:
+                execute_start = time.time()
+                
+                if params:
+                    logger.debug(
+                        f"📝 [QUERY EXECUTE] 파라미터화된 쿼리 실행",
+                        {
+                            "query_key": query_key,
+                            "params": str(params),
+                            "params_type": type(params).__name__
+                        }
+                    )
+                    cursor.execute(query, params)
+                else:
+                    logger.debug(
+                        f"📝 [QUERY EXECUTE] 일반 쿼리 실행",
+                        {
+                            "query_key": query_key,
+                            "query": query
+                        }
+                    )
+                    cursor.execute(query)
+                
+                execute_elapsed = time.time() - execute_start
+                logger.debug(
+                    f"⏱️  [QUERY EXECUTE] 쿼리 실행 완료",
+                    {
+                        "query_key": query_key,
+                        "execute_elapsed_seconds": round(execute_elapsed, 4),
+                        "rowcount": cursor.rowcount if hasattr(cursor, 'rowcount') else None
+                    }
+                )
+                
+                fetch_start = time.time()
+                results = cursor.fetchall()
+                fetch_elapsed = time.time() - fetch_start
+                
+                logger.debug(
+                    f"📊 [QUERY FETCH] 결과 조회 완료",
+                    {
+                        "query_key": query_key,
+                        "fetch_elapsed_seconds": round(fetch_elapsed, 4),
+                        "results_count": len(results) if results else 0
+                    }
+                )
+                
+                # DictCursor를 사용하므로 결과는 이미 딕셔너리 리스트
+                result_list = [dict(row) for row in results] if results else []
+                
+                logger.info(
+                    f"✅ [TOOL RESULT] rdb_query_hard 완료",
+                    {
+                        "tool_name": "rdb_query_hard",
+                        "query_key": query_key,
+                        "rows_count": len(result_list),
+                        "result_preview": result_list[:3] if result_list else [],
+                        "total_execution_time": round(execute_elapsed + fetch_elapsed, 4)
+                    }
+                )
+                
+                return result_list
+        except pymysql.Error as db_error:
+            # 데이터베이스 오류 상세 로깅
+            error_info = {
+                "query_key": query_key,
+                "query": query,
+                "query_length": len(query),
+                "has_params": params is not None,
+                "params": str(params) if params else None,
+                "error": str(db_error),
+                "error_type": type(db_error).__name__,
+                "error_code": db_error.args[0] if db_error.args else None,
+                "error_message": db_error.args[1] if len(db_error.args) > 1 else None,
+            }
             
-            results = cursor.fetchall()
-            
-            # DictCursor를 사용하므로 결과는 이미 딕셔너리 리스트
-            result_list = [dict(row) for row in results] if results else []
-            
-            logger.info(
-                f"✅ [TOOL RESULT] rdb_query_hard 완료",
-                {
-                    "tool_name": "rdb_query_hard",
-                    "query_key": query_key,
-                    "rows_count": len(result_list),
-                    "result_preview": result_list[:3] if result_list else []
-                }
+            logger.error(
+                f"❌ [DATABASE ERROR] 데이터베이스 오류 발생",
+                error_info,
+                exc_info=True
             )
             
-            return result_list
+            # 터미널에 직접 출력
+            print(f"\n{'='*80}")
+            print(f"❌ [DATABASE ERROR] rdb_query_hard 실행 중 오류 발생")
+            print(f"{'='*80}")
+            print(f"Query Key: {query_key}")
+            print(f"Query: {query}")
+            if params:
+                print(f"Params: {params}")
+            print(f"Error Type: {type(db_error).__name__}")
+            print(f"Error Code: {db_error.args[0] if db_error.args else 'N/A'}")
+            print(f"Error Message: {db_error.args[1] if len(db_error.args) > 1 else str(db_error)}")
+            import traceback
+            print(f"\nFull Traceback:")
+            print(traceback.format_exc())
+            print(f"{'='*80}\n")
+            
+            raise ToolError("rdb_query_hard", f"데이터베이스 오류: {str(db_error)}", db_error)
     except (ValueError, KeyError) as e:
         # Placeholder 관련 오류는 ToolError로 변환 (데코레이터가 처리)
-        raise
-    except pymysql.Error as e:
-        # 데이터베이스 오류
         logger.error(
-            f"❌ 데이터베이스 오류",
-            {"query_key": query_key, "error": str(e)},
+            f"❌ [PLACEHOLDER ERROR] Placeholder 오류",
+            {
+                "query_key": query_key,
+                "query": query,
+                "error": str(e),
+                "error_type": type(e).__name__
+            },
             exc_info=True
         )
-        raise ToolError("rdb_query_hard", f"데이터베이스 오류: {str(e)}", e)
+        raise
+    except Exception as e:
+        # 기타 예상치 못한 오류
+        logger.error(
+            f"❌ [UNEXPECTED ERROR] 예상치 못한 오류",
+            {
+                "query_key": query_key,
+                "query": query,
+                "error": str(e),
+                "error_type": type(e).__name__
+            },
+            exc_info=True
+        )
+        
+        # 터미널에 직접 출력
+        print(f"\n{'='*80}")
+        print(f"❌ [UNEXPECTED ERROR] rdb_query_hard 실행 중 예상치 못한 오류")
+        print(f"{'='*80}")
+        print(f"Query Key: {query_key}")
+        print(f"Query: {query}")
+        print(f"Error Type: {type(e).__name__}")
+        print(f"Error Message: {str(e)}")
+        import traceback
+        print(f"\nFull Traceback:")
+        print(traceback.format_exc())
+        print(f"{'='*80}\n")
+        
+        raise
 
 
 @tool(args_schema=RDBQueryLLMInput)
