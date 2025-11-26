@@ -1,0 +1,309 @@
+"""Tool 관련 유틸리티 (에러 처리, 스키마, decorator 통합)"""
+from typing import List, Dict, Any, Optional, Tuple, Callable
+from functools import wraps
+from src.utils.logger import get_logger
+
+logger = get_logger("tools-utils")
+
+# ============================================================================
+# LangChain Tool Decorator
+# ============================================================================
+
+try:
+    from langchain_core.tools import tool
+    LANGCHAIN_TOOLS_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_TOOLS_AVAILABLE = False
+    # Fallback decorator
+    def tool(*args, **kwargs) -> Callable:
+        def decorator(func: Callable) -> Callable:
+            return func
+        return decorator
+
+# ============================================================================
+# Tool 스키마 정의 (Pydantic 모델)
+# ============================================================================
+
+try:
+    from pydantic import BaseModel, Field
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    # Fallback: 간단한 BaseModel
+    class BaseModel:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+    
+    def Field(*args, **kwargs):
+        return None
+
+
+class RDBQueryHardInput(BaseModel):
+    """RDB 하드 쿼리 입력 스키마"""
+    query_key: str = Field(
+        description="실행할 쿼리의 키 (예: 'get_by_date', 'get_by_range', 'get_latest')",
+        examples=["get_by_date", "get_by_range", "get_latest"]
+    )
+    params: Optional[Tuple[Any, ...]] = Field(
+        default=None,
+        description="쿼리 파라미터 (튜플) - placeholder 사용 시 None"
+    )
+    state: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="AgentState 딕셔너리 (placeholder 치환용)"
+    )
+
+
+class RDBQueryLLMInput(BaseModel):
+    """RDB LLM 쿼리 입력 스키마"""
+    user_request: str = Field(
+        description="사용자 요청 (자연어)",
+        examples=["2024-01-15의 USD/KRW 환율을 조회해줘"]
+    )
+    context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="추가 컨텍스트 정보"
+    )
+
+
+class RDBModifyInput(BaseModel):
+    """RDB 수정 쿼리 입력 스키마"""
+    query: str = Field(
+        description="실행할 SQL 쿼리 (INSERT, UPDATE, DELETE)",
+        examples=["UPDATE eiExchangeRate SET usdkrw = 1300.0 WHERE date = '2024-01-15'"]
+    )
+    params: Optional[Tuple[Any, ...]] = Field(
+        default=None,
+        description="쿼리 파라미터 (튜플)"
+    )
+
+
+class RDBModifyByKeyInput(BaseModel):
+    """RDB 수정 쿼리 (키 기반) 입력 스키마"""
+    query_key: str = Field(
+        description="실행할 쿼리의 키",
+        examples=["update_exchange_rate"]
+    )
+    params: Optional[Tuple[Any, ...]] = Field(
+        default=None,
+        description="쿼리 파라미터 (튜플)"
+    )
+
+
+class VDBSearchInput(BaseModel):
+    """VDB 검색 입력 스키마"""
+    query_vector: List[float] = Field(
+        description="검색할 벡터",
+        examples=[[0.1, 0.2, 0.3, ...]]
+    )
+    collection_name: str = Field(
+        default="fx_hedge_data",
+        description="컬렉션 이름"
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="반환할 결과 수"
+    )
+
+
+class VDBCreateCollectionInput(BaseModel):
+    """VDB 컬렉션 생성 입력 스키마"""
+    collection_name: str = Field(
+        default="fx_hedge_data",
+        description="컬렉션 이름"
+    )
+    vector_size: int = Field(
+        default=384,
+        ge=1,
+        description="벡터 크기"
+    )
+
+
+class VDBUpsertPointsInput(BaseModel):
+    """VDB 포인트 업서트 입력 스키마"""
+    points: List[Dict[str, Any]] = Field(
+        description="업서트할 포인트 리스트"
+    )
+    collection_name: str = Field(
+        default="fx_hedge_data",
+        description="컬렉션 이름"
+    )
+
+
+class WebSearchInput(BaseModel):
+    """웹 검색 입력 스키마"""
+    query: str = Field(
+        description="검색 쿼리",
+        examples=["USD/KRW 환율 최신 뉴스"]
+    )
+    num_results: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="반환할 결과 수 (최대 10)"
+    )
+
+# ============================================================================
+# Tool 에러 처리
+# ============================================================================
+
+class ToolError(Exception):
+    """Tool 실행 중 발생하는 커스텀 에러"""
+    def __init__(self, tool_name: str, message: str, error: Optional[Exception] = None):
+        self.tool_name = tool_name
+        self.message = message
+        self.original_error = error
+        super().__init__(f"[{tool_name}] {message}")
+
+
+def handle_tool_error(tool_name: str):
+    """
+    Tool 함수의 에러 처리를 통일하는 데코레이터
+    
+    Args:
+        tool_name: Tool 이름
+        
+    Usage:
+        @handle_tool_error("rdb_query_hard")
+        async def rdb_query_hard(...):
+            ...
+    """
+    def decorator(func):
+        @wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            try:
+                return await func(*args, **kwargs)
+            except ToolError:
+                # ToolError는 그대로 전파
+                raise
+            except ValueError as e:
+                # ValueError는 ToolError로 변환
+                logger.error(
+                    f"❌ {tool_name} 실행 실패 (값 오류)",
+                    {"error": str(e)},
+                    exc_info=True
+                )
+                raise ToolError(tool_name, f"값 오류: {str(e)}", e)
+            except KeyError as e:
+                # KeyError는 ToolError로 변환
+                logger.error(
+                    f"❌ {tool_name} 실행 실패 (키 오류)",
+                    {"error": str(e)},
+                    exc_info=True
+                )
+                raise ToolError(tool_name, f"키 오류: {str(e)}", e)
+            except Exception as e:
+                # 기타 예외는 ToolError로 변환
+                logger.error(
+                    f"❌ {tool_name} 실행 실패",
+                    {"error": str(e)},
+                    exc_info=True
+                )
+                raise ToolError(tool_name, f"예상치 못한 오류: {str(e)}", e)
+        
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except ToolError:
+                raise
+            except ValueError as e:
+                logger.error(
+                    f"❌ {tool_name} 실행 실패 (값 오류)",
+                    {"error": str(e)},
+                    exc_info=True
+                )
+                raise ToolError(tool_name, f"값 오류: {str(e)}", e)
+            except KeyError as e:
+                logger.error(
+                    f"❌ {tool_name} 실행 실패 (키 오류)",
+                    {"error": str(e)},
+                    exc_info=True
+                )
+                raise ToolError(tool_name, f"키 오류: {str(e)}", e)
+            except Exception as e:
+                logger.error(
+                    f"❌ {tool_name} 실행 실패",
+                    {"error": str(e)},
+                    exc_info=True
+                )
+                raise ToolError(tool_name, f"예상치 못한 오류: {str(e)}", e)
+        
+        # 비동기 함수인지 확인
+        import asyncio
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+    
+    return decorator
+
+# ============================================================================
+# Tool 관리 함수
+# ============================================================================
+
+def get_all_tools() -> List[Any]:
+    """
+    모든 tool 함수를 반환 (LangChain bind_tools용)
+    
+    Returns:
+        Tool 함수 리스트
+    """
+    from src.tools.rdb import (
+        rdb_query_hard,
+        rdb_query_llm,
+        rdb_modify,
+        rdb_modify_by_key
+    )
+    from src.tools.vdb import (
+        vdb_search,
+        vdb_create_collection,
+        vdb_upsert_points
+    )
+    from src.tools.web_search import web_search
+    
+    return [
+        rdb_query_hard,
+        rdb_query_llm,
+        rdb_modify,
+        rdb_modify_by_key,
+        vdb_search,
+        vdb_create_collection,
+        vdb_upsert_points,
+        web_search
+    ]
+
+
+def bind_tools_to_llm(llm: Any, tools: Optional[List[Any]] = None) -> Any:
+    """
+    LangChain LLM에 tool을 바인딩 (LangChain 내장 함수 사용)
+    
+    Args:
+        llm: LangChain LLM 인스턴스 (ChatOpenAI 등)
+        tools: 바인딩할 tool 리스트 (None이면 모든 tool 사용)
+        
+    Returns:
+        Tool이 바인딩된 LLM 인스턴스
+    """
+    if tools is None:
+        tools = get_all_tools()
+    
+    try:
+        # LangChain의 bind_tools 내장 함수 사용
+        if hasattr(llm, 'bind_tools'):
+            # bind_tools는 LangChain의 표준 메서드
+            return llm.bind_tools(tools)
+        else:
+            logger.warning("⚠️  LLM이 bind_tools를 지원하지 않습니다.")
+            return llm
+    except Exception as e:
+        logger.error(
+            f"❌ Tool 바인딩 실패",
+            {"error": str(e)},
+            exc_info=True
+        )
+        return llm
+

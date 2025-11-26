@@ -1,4 +1,30 @@
-pandas>=2.0
-requests>=2.31
-python-dotenv>=1.0
+# FastAPI 및 웹 서버
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# OpenAI
+openai>=1.12.0
+
+# 데이터베이스
+pymysql==1.1.0
+cryptography==41.0.7
+
+# 벡터 데이터베이스
+qdrant-client==1.7.0
+
+# HTTP 요청
+requests==2.31.0
+
+# 유틸리티
+python-dotenv==1.0.0
+
+# LangSmith
+langsmith>=0.3.45
+langchain-openai>=0.1.0
+
+# LangGraph
+langgraph>=0.2.0
+langchain-core>=0.3.0
 

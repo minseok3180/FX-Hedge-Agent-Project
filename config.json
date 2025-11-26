@@ -1,0 +1,35 @@
+{
+  "openai": {
+    "api_key": "${OPENAI_API_KEY}",
+    "model": "${OPENAI_MODEL:-gpt-4.1}"
+  },
+  "database": {
+    "host": "${DB_HOST}",
+    "port": "${DB_PORT:-3306}",
+    "user": "${DB_USER}",
+    "password": "${DB_PASSWORD}",
+    "name": "${DB_NAME}"
+  },
+  "qdrant": {
+    "url": "${QDRANT_URL:-}",
+    "host": "${QDRANT_HOST:-}",
+    "port": "${QDRANT_PORT:-6333}",
+    "api_key": "${QDRANT_API_KEY:-}"
+  },
+  "api": {
+    "host": "${API_HOST:-0.0.0.0}",
+    "port": "${API_PORT:-8000}",
+    "title": "FX Hedge Agent API",
+    "version": "1.0.0"
+  },
+  "web_search": {
+    "api_key": "${WEB_SEARCH_API_KEY:-}",
+    "engine_id": "${WEB_SEARCH_ENGINE_ID:-}"
+  },
+  "langsmith": {
+    "api_key": "${LANGSMITH_API_KEY:-}",
+    "project": "${LANGSMITH_PROJECT:-fx-hedge-agent}",
+    "tracing": "${LANGSMITH_TRACING:-true}"
+  }
+}
+
