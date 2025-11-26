@@ -1,0 +1,8 @@
+{
+  "currency": "USD",
+  "impact": 0.6,
+  "direction": "down",
+  "risk": "medium",
+  "confidence": 0.7,
+  "volatility_impact": 0.5
+}

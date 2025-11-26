@@ -4,13 +4,13 @@ def fetch_news():
     url = "https://forexnewsapi.com/api/v1/category"
     params = {
         "section": "general",
-        "items": 3,
-        "page": 1,
+        "items": 50,
+        "page": 5,
         "token": "yyngfmqhyup8kqfze4rqg5sbcuiedbfzvsjwskpw"
     }
 
     response = requests.get(url, params=params)
-    articles_list = []   # 문자열 리스트
+    articles_list = []
 
     if response.status_code == 200:
         data = response.json()
@@ -31,4 +31,13 @@ def fetch_news():
 
     return articles_list
 
+import json
 
+# 뉴스 저장
+news_list = fetch_news()
+with open("news_cache.json", "w", encoding="utf-8") as f:
+    json.dump(news_list, f, ensure_ascii=False, indent=2)
+
+# 뉴스 불러오기
+with open("news_cache.json", "r", encoding="utf-8") as f:
+    news_list = json.load(f)
