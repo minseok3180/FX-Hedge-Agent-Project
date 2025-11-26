@@ -3,7 +3,6 @@ import json
 from typing import Dict, Any, Optional, List
 from src.utils.agents import BaseAgent
 from src.tools.rdb import rdb_query_hard, rdb_query_llm
-from src.tools.vdb import vdb_search
 from src.tools.web_search import web_search
 from src.prompts.market_information_instruction import MARKET_INFORMATION_INSTRUCTION
 from src.utils.llm import call_gpt
@@ -56,7 +55,15 @@ class MarketInformationAgent(BaseAgent):
                 search_query = analysis_result.get("web_search_query", user_query)
                 num_results = analysis_result.get("web_search_num_results", 5)
                 
-                self.logger.info(f"🔍 웹 검색 실행 - query: {search_query}, num_results: {num_results}")
+                self.logger.info(
+                    f"🔧 [TOOL CALL] web_search 호출",
+                    {
+                        "tool_name": "web_search",
+                        "query": search_query,
+                        "num_results": num_results,
+                        "agent": "market_information"
+                    }
+                )
                 
                 try:
                     web_results = await web_search(search_query, num_results=num_results)
@@ -83,7 +90,15 @@ class MarketInformationAgent(BaseAgent):
                 query_type = analysis_result.get("query_type")
                 query_params = analysis_result.get("query_params", {})
                 
-                self.logger.info(f"🔍 RDB 쿼리 실행 - type: {query_type}, params: {query_params}")
+                self.logger.info(
+                    f"🔧 [TOOL CALL] rdb_query_hard 호출",
+                    {
+                        "tool_name": "rdb_query_hard",
+                        "query_type": query_type,
+                        "query_params": query_params,
+                        "agent": "market_information"
+                    }
+                )
                 
                 try:
                     if query_type == "get_by_date":
@@ -176,6 +191,15 @@ class MarketInformationAgent(BaseAgent):
                         
                     elif query_type == "rdb_llm":
                         # LLM이 쿼리를 생성하여 실행
+                        self.logger.info(
+                            f"🔧 [TOOL CALL] rdb_query_llm 호출",
+                            {
+                                "tool_name": "rdb_query_llm",
+                                "user_query": user_query,
+                                "has_context": context is not None,
+                                "agent": "market_information"
+                            }
+                        )
                         rdb_result = await rdb_query_llm(user_query, context)
                         
                         # rdb_llm은 "results" 키를 반환하므로 수정

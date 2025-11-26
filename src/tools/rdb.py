@@ -2,19 +2,17 @@
 import pymysql
 import json
 import re
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any, Optional, Tuple
 from src.utils.settings import settings
 from src.utils.logger import get_logger
 from src.query.rdb_hard_queries import rdb_hard_queries
-from src.query.rdb_modify_queries import rdb_modify_queries
 from src.utils.tools import (
     tool,
     handle_tool_error,
     ToolError,
     RDBQueryHardInput,
     RDBQueryLLMInput,
-    RDBModifyInput,
-    RDBModifyByKeyInput
+    RDBModifyInput
 )
 
 logger = get_logger("rdb-tool")
@@ -27,7 +25,25 @@ DB_METADATA = {
             "description": "환율 및 경제 지표 데이터 테이블",
             "columns": {
                 "date": {"type": "DATE", "description": "날짜 (YYYY-MM-DD)"},
-                "usdkrw": {"type": "DECIMAL", "description": "USD/KRW 환율"},
+                "usdkrw": {"type": "DOUBLE", "description": "USD/KRW 환율"},
+                "미국수출금액": {"type": "DOUBLE", "description": "미국 수출 금액"},
+                "미국수입금액": {"type": "DOUBLE", "description": "미국 수입 금액"},
+                "외환보유액": {"type": "DOUBLE", "description": "외환 보유액"},
+                "미국외환보유액": {"type": "DOUBLE", "description": "미국 외환 보유액"},
+                "한국은행기준금리": {"type": "DOUBLE", "description": "한국은행 기준금리"},
+                "정부대출금금리": {"type": "DOUBLE", "description": "정부 대출금 금리"},
+                "시장금리": {"type": "DOUBLE", "description": "시장 금리"},
+                "소비자물가지수": {"type": "DOUBLE", "description": "소비자 물가지수"},
+                "수출물가지수": {"type": "DOUBLE", "description": "수출 물가지수"},
+                "수입물가지수": {"type": "DOUBLE", "description": "수입 물가지수"},
+                "경제성장률": {"type": "DOUBLE", "description": "경제 성장률"},
+                "미국경제성장률": {"type": "DOUBLE", "description": "미국 경제 성장률"},
+                "gdp": {"type": "DOUBLE", "description": "GDP"},
+                "us_gdp": {"type": "DOUBLE", "description": "미국 GDP"},
+                "주가지수": {"type": "DOUBLE", "description": "주가지수"},
+                "미국주가지수": {"type": "DOUBLE", "description": "미국 주가지수"},
+                "한국금리": {"type": "DOUBLE", "description": "한국 금리"},
+                "미국금리": {"type": "DOUBLE", "description": "미국 금리"},
             }
         },
         "user_info": {
@@ -51,7 +67,7 @@ FEW_SHOT_EXAMPLES = [
     },
     {
         "user_request": "최근 10일간의 환율과 기준금리 데이터를 가져와줘",
-        "sql_query": "SELECT date, usdkrw, base FROM eiExchangeRate ORDER BY date DESC LIMIT 10",
+        "sql_query": "SELECT date, usdkrw, 한국은행기준금리 FROM eiExchangeRate ORDER BY date DESC LIMIT 10",
         "explanation": "최신 데이터를 날짜 내림차순으로 정렬하여 조회"
     },
     {
@@ -61,7 +77,7 @@ FEW_SHOT_EXAMPLES = [
     },
     {
         "user_request": "미국 금리가 5% 이상인 날짜들의 환율을 조회해줘",
-        "sql_query": "SELECT date, usdkrw, us_interest FROM eiExchangeRate WHERE us_interest >= 5.0 ORDER BY date DESC",
+        "sql_query": "SELECT date, usdkrw, 미국금리 FROM eiExchangeRate WHERE 미국금리 >= 5.0 ORDER BY date DESC",
         "explanation": "조건문을 사용하여 특정 조건을 만족하는 데이터만 필터링"
     }
 ]
@@ -242,6 +258,28 @@ async def rdb_query_hard(
             # Placeholder 사용 시 params는 None으로 설정
             params = None
         
+        # Tool 호출 및 쿼리 로깅
+        logger.info(
+            f"🔧 [TOOL CALL] rdb_query_hard 실행",
+            {
+                "tool_name": "rdb_query_hard",
+                "query_key": query_key,
+                "has_params": params is not None,
+                "params": str(params) if params else None,
+                "has_placeholder": bool(has_placeholder),
+                "state_provided": state is not None
+            }
+        )
+        
+        logger.info(
+            f"📝 [QUERY] RDB 쿼리 실행",
+            {
+                "query_key": query_key,
+                "query": query,
+                "params": str(params) if params else None
+            }
+        )
+        
         conn = _db_connection._get_connection()
         with conn.cursor() as cursor:
             if params:
@@ -254,9 +292,14 @@ async def rdb_query_hard(
             # DictCursor를 사용하므로 결과는 이미 딕셔너리 리스트
             result_list = [dict(row) for row in results] if results else []
             
-            logger.debug(
-                f"✅ 쿼리 실행 완료",
-                {"rows_count": len(result_list)}
+            logger.info(
+                f"✅ [TOOL RESULT] rdb_query_hard 완료",
+                {
+                    "tool_name": "rdb_query_hard",
+                    "query_key": query_key,
+                    "rows_count": len(result_list),
+                    "result_preview": result_list[:3] if result_list else []
+                }
             )
             
             return result_list
@@ -313,11 +356,36 @@ async def rdb_query_llm(
 ## 데이터베이스 메타데이터
 {metadata_str}
 
+## 중요: 컬럼명 주의사항
+**eiExchangeRate 테이블의 컬럼명은 한글을 사용합니다:**
+- `date`: 날짜 (DATE)
+- `usdkrw`: USD/KRW 환율 (DOUBLE)
+- `미국수출금액`: 미국 수출 금액 (DOUBLE)
+- `미국수입금액`: 미국 수입 금액 (DOUBLE)
+- `외환보유액`: 외환 보유액 (DOUBLE)
+- `미국외환보유액`: 미국 외환 보유액 (DOUBLE)
+- `한국은행기준금리`: 한국은행 기준금리 (DOUBLE)
+- `정부대출금금리`: 정부 대출금 금리 (DOUBLE)
+- `시장금리`: 시장 금리 (DOUBLE)
+- `소비자물가지수`: 소비자 물가지수 (DOUBLE)
+- `수출물가지수`: 수출 물가지수 (DOUBLE)
+- `수입물가지수`: 수입 물가지수 (DOUBLE)
+- `경제성장률`: 경제 성장률 (DOUBLE)
+- `미국경제성장률`: 미국 경제 성장률 (DOUBLE)
+- `gdp`: GDP (DOUBLE)
+- `us_gdp`: 미국 GDP (DOUBLE)
+- `주가지수`: 주가지수 (DOUBLE)
+- `미국주가지수`: 미국 주가지수 (DOUBLE)
+- `한국금리`: 한국 금리 (DOUBLE)
+- `미국금리`: 미국 금리 (DOUBLE)
+
+**절대 영어 컬럼명(base, us_interest, reserve 등)을 사용하지 마세요. 반드시 한글 컬럼명을 사용하세요.**
+
 ## 쿼리 작성 규칙
 1. **보안**: SQL Injection을 방지하기 위해 파라미터화된 쿼리를 사용하지 않고, 직접 값을 넣되 문자열은 작은따옴표로 감싸세요.
 2. **날짜 형식**: 날짜는 반드시 'YYYY-MM-DD' 형식을 사용하세요.
 3. **테이블명**: 대소문자를 구분하므로 정확한 테이블명을 사용하세요 (eiExchangeRate).
-4. **컬럼명**: 정확한 컬럼명을 사용하세요.
+4. **컬럼명**: **반드시 한글 컬럼명을 정확히 사용하세요.** 영어 컬럼명은 사용하지 마세요.
 5. **LIMIT**: 대량의 데이터 조회 시 반드시 LIMIT을 사용하세요.
 6. **SELECT**: 필요한 컬럼만 선택하세요.
 
@@ -366,8 +434,27 @@ SQL 쿼리만 반환하되, JSON 형식으로 감싸서 반환하세요."""
             {"sql_query": sql_query, "explanation": explanation}
         )
         
+        # Tool 호출 및 쿼리 로깅
+        logger.info(
+            f"🔧 [TOOL CALL] rdb_query_llm 실행",
+            {
+                "tool_name": "rdb_query_llm",
+                "user_request": user_request,
+                "has_context": context is not None,
+                "generated_query": sql_query,
+                "explanation": explanation
+            }
+        )
+        
+        logger.info(
+            f"📝 [QUERY] LLM 생성 쿼리 실행",
+            {
+                "query": sql_query,
+                "user_request": user_request
+            }
+        )
+        
         # 쿼리 실행
-        logger.debug("🚀 쿼리 실행 중...")
         conn = _db_connection._get_connection()
         with conn.cursor() as cursor:
             cursor.execute(sql_query)
@@ -375,8 +462,13 @@ SQL 쿼리만 반환하되, JSON 형식으로 감싸서 반환하세요."""
             result_list = [dict(row) for row in results] if results else []
         
         logger.info(
-            f"✅ 쿼리 실행 완료",
-            {"results_count": len(result_list)}
+            f"✅ [TOOL RESULT] rdb_query_llm 완료",
+            {
+                "tool_name": "rdb_query_llm",
+                "query": sql_query,
+                "results_count": len(result_list),
+                "result_preview": result_list[:3] if result_list else []
+            }
         )
         
         return {
@@ -440,9 +532,23 @@ async def rdb_modify(
     Returns:
         실행 결과 딕셔너리
     """
+    # Tool 호출 및 쿼리 로깅
     logger.info(
-        f"🔧 데이터 수정 쿼리 실행 시작",
-        {"query_preview": query[:100], "has_params": params is not None}
+        f"🔧 [TOOL CALL] rdb_modify 실행",
+        {
+            "tool_name": "rdb_modify",
+            "query_preview": query[:100],
+            "has_params": params is not None,
+            "params": str(params) if params else None
+        }
+    )
+    
+    logger.info(
+        f"📝 [QUERY] RDB 수정 쿼리 실행",
+        {
+            "query": query,
+            "params": str(params) if params else None
+        }
     )
     
     # 쿼리 타입 확인 (SELECT는 허용하지 않음)
@@ -465,8 +571,13 @@ async def rdb_modify(
             conn.commit()
             
             logger.info(
-                f"✅ 데이터 수정 완료",
-                {"affected_rows": affected_rows, "query_type": query_upper.split()[0]}
+                f"✅ [TOOL RESULT] rdb_modify 완료",
+                {
+                    "tool_name": "rdb_modify",
+                    "query": query,
+                    "affected_rows": affected_rows,
+                    "query_type": query_upper.split()[0]
+                }
             )
             
             return {
@@ -494,90 +605,4 @@ async def rdb_modify(
         except:
             pass
         raise ToolError("rdb_modify", f"데이터베이스 오류: {str(e)}", e)
-
-
-@tool(args_schema=RDBModifyByKeyInput)
-@handle_tool_error("rdb_modify_by_key")
-async def rdb_modify_by_key(
-    query_key: str,
-    params: Optional[Tuple[Any, ...]] = None
-) -> Dict[str, Any]:
-    """
-    쿼리 키를 사용하여 수정 쿼리 실행
-    
-    Args:
-        query_key: 실행할 쿼리의 키
-        params: 쿼리 파라미터 (튜플)
-        
-    Returns:
-        실행 결과 딕셔너리
-    """
-    if query_key not in rdb_modify_queries:
-        available = ", ".join(rdb_modify_queries.keys())
-        raise ToolError(
-            "rdb_modify_by_key",
-            f"쿼리 키 '{query_key}'를 찾을 수 없습니다. 사용 가능한 쿼리: {available}"
-        )
-    
-    query = rdb_modify_queries[query_key]
-    return await rdb_modify(query, params)
-
-
-# 편의 함수들 (하위 호환성 유지)
-async def get_by_date(
-    date: Optional[str] = None,
-    state: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
-    """
-    특정 일자의 경제 지표 조회 (편의 함수)
-    
-    Args:
-        date: 날짜 (YYYY-MM-DD 형식) - None이면 state에서 가져옴
-        state: AgentState 딕셔너리 (date가 None일 때 사용)
-        
-    Returns:
-        경제 지표 정보 리스트
-    """
-    if date:
-        return await rdb_query_hard("get_by_date", (date,), state)
-    else:
-        return await rdb_query_hard("get_by_date", None, state)
-
-
-async def get_by_range(
-    start_date: str,
-    end_date: str,
-    limit: int = 100,
-    state: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
-    """
-    날짜 범위의 경제 지표 조회 (편의 함수)
-    
-    Args:
-        start_date: 시작 날짜 (YYYY-MM-DD 형식)
-        end_date: 종료 날짜 (YYYY-MM-DD 형식)
-        limit: 최대 조회 개수
-        state: AgentState 딕셔너리
-        
-    Returns:
-        경제 지표 정보 리스트
-    """
-    return await rdb_query_hard("get_by_range", (start_date, end_date, limit), state)
-
-
-async def get_latest(
-    limit: int = 10,
-    state: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
-    """
-    최신 경제 지표 조회 (편의 함수)
-    
-    Args:
-        limit: 조회할 최신 데이터 개수
-        state: AgentState 딕셔너리
-        
-    Returns:
-        경제 지표 정보 리스트
-    """
-    return await rdb_query_hard("get_latest", (limit,), state)
 

@@ -43,9 +43,22 @@ async def web_search(
         )
         return []
     
+    # Tool 호출 및 검색 쿼리 로깅
     logger.info(
-        f"🔍 웹 검색 시작",
-        {"query": query, "num_results": num_results}
+        f"🔧 [TOOL CALL] web_search 실행",
+        {
+            "tool_name": "web_search",
+            "query": query,
+            "num_results": num_results
+        }
+    )
+    
+    logger.info(
+        f"📝 [QUERY] 웹 검색 실행",
+        {
+            "search_query": query,
+            "num_results": num_results
+        }
     )
     
     try:
@@ -69,8 +82,13 @@ async def web_search(
             })
         
         logger.info(
-            f"✅ 웹 검색 완료",
-            {"query": query, "results_count": len(results)}
+            f"✅ [TOOL RESULT] web_search 완료",
+            {
+                "tool_name": "web_search",
+                "query": query,
+                "results_count": len(results),
+                "result_preview": [{"title": r["title"][:50]} for r in results[:3]] if results else []
+            }
         )
         
         return results
