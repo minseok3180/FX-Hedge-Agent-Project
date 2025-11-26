@@ -1,9 +1,17 @@
 """Tool 관련 유틸리티 (에러 처리, 스키마, decorator 통합)"""
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from typing import List, Dict, Any, Optional, Tuple, Callable, Union
 from functools import wraps
 from src.utils.logger import get_logger
 
 logger = get_logger("tools-utils")
+
+# LangGraph Command import
+try:
+    from langgraph.types import Command
+    LANGGRAPH_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_AVAILABLE = False
+    Command = None
 
 # ============================================================================
 # LangChain Tool Decorator

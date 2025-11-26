@@ -26,6 +26,7 @@ from .tools import (
     VDBUpsertPointsInput,
     WebSearchInput
 )
+from .tool_helpers import create_command_from_tool_result
 
 __all__ = [
     "get_logger",
@@ -54,5 +55,6 @@ __all__ = [
     "VDBCreateCollectionInput",
     "VDBUpsertPointsInput",
     "WebSearchInput",
+    "create_command_from_tool_result",
 ]
 
