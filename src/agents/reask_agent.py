@@ -1,6 +1,6 @@
 """ReAsk 에이전트 - 답변에 필요한 정보가 부족할 경우 재질문"""
 from typing import Dict, Any, Optional, List
-from src.agents.base_agent import BaseAgent
+from src.utils.agents import BaseAgent
 from src.utils.logger import get_logger
 
 

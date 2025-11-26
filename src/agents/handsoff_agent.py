@@ -1,6 +1,6 @@
 """Hands-off 에이전트 - 직접 답변할지 Supervisor에게 넘길지 결정"""
 from typing import Dict, Any, Optional
-from src.agents.base_agent import BaseAgent
+from src.utils.agents import BaseAgent
 
 
 HANDSOFF_SYSTEM_PROMPT = """당신은 에이전트로서 사용자 질문에 직접 답변할지, Supervisor에게 넘길지 결정하는 전문가입니다.

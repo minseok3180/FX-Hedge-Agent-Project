@@ -1,5 +1,5 @@
 """멀티 에이전트 시스템 State 관리"""
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Literal, Union
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from src.utils.logger import get_logger
@@ -26,6 +26,63 @@ class Action:
     output: Dict[str, Any] = field(default_factory=dict)  # 출력 결과
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
 
+
+def create_reference_and_action_from_tool_result(
+    tool_name: str,
+    tool_result: Any,
+    source: str,
+    query: Optional[str] = None,
+    input_params: Optional[Dict[str, Any]] = None,
+    metadata: Optional[Dict[str, Any]] = None
+) -> tuple[Reference, Action]:
+    """
+    툴 실행 결과로부터 Reference와 Action 생성 (헬퍼 함수)
+    
+    Args:
+        tool_name: 툴 이름 (예: "web_search", "rdb_hard")
+        tool_result: 툴 실행 결과
+        source: 참고 자료 소스 ("rdb", "vdb", "web_search" 등)
+        query: 실행한 쿼리 또는 검색어
+        input_params: 입력 파라미터
+        metadata: 추가 메타데이터
+        
+    Returns:
+        (Reference, Action) 튜플
+    """
+    # 결과 개수 계산
+    if isinstance(tool_result, list):
+        results_count = len(tool_result)
+    elif isinstance(tool_result, dict):
+        # results_count 추출
+        if "results_count" in tool_result:
+            results_count = tool_result["results_count"]
+        elif "results" in tool_result and isinstance(tool_result["results"], list):
+            results_count = len(tool_result["results"])
+        elif "data" in tool_result and isinstance(tool_result["data"], list):
+            results_count = len(tool_result["data"])
+        else:
+            results_count = 0
+    else:
+        results_count = 1 if tool_result else 0
+    
+    # Reference 생성
+    reference = Reference(
+        source=source,
+        query=query,
+        results_count=results_count,
+        metadata=metadata or {}
+    )
+    
+    # Action 생성
+    action = Action(
+        type="query" if source in ["rdb", "vdb"] else "search" if source == "web_search" else "execute",
+        tool=tool_name,
+        description=f"{tool_name} 실행: {query or tool_name}",
+        input=input_params or {},
+        output={"results_count": results_count}
+    )
+    
+    return reference, action
 
 @dataclass
 class AdditionalInfo:

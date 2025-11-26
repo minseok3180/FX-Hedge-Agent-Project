@@ -1,8 +1,7 @@
 """ReAct 에이전트 - Reasoning과 Acting을 반복하여 문제 해결"""
 from typing import Dict, Any, Optional, List
-from src.agents.base_agent import BaseAgent
-from src.tools.rdb_query import RDBHardTool
-from src.tools.rdb_llm import RDBSoftTool
+from src.utils.agents import BaseAgent
+from src.tools.rdb import rdb_query_hard, rdb_query_llm
 
 
 REACT_SYSTEM_PROMPT = """당신은 Reasoning과 Acting을 반복하여 문제를 해결하는 ReAct 에이전트입니다.
@@ -39,8 +38,7 @@ class ReActAgent(BaseAgent):
             name="react",
             description="Reasoning과 Acting을 반복하여 문제를 해결하는 ReAct 에이전트"
         )
-        self.rdb_hard = RDBHardTool()
-        self.rdb_soft = RDBSoftTool()
+        # 툴은 함수형으로 사용 (초기화 불필요)
         self.max_iterations = 5  # 최대 반복 횟수
     
     async def execute(self, task: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -175,12 +173,14 @@ class ReActAgent(BaseAgent):
             if action == "rdb_hard":
                 query_key = action_input.get("query_key", "get_latest")
                 params = action_input.get("params", ())
-                results = await self.rdb_hard.execute(query_key, params if params else None)
+                state = action_input.get("state")
+                results = await rdb_query_hard(query_key, params if params else None, state)
                 return f"조회된 데이터: {len(results)}개 결과"
             
             elif action == "rdb_soft":
                 user_request = action_input.get("user_request", "")
-                results = await self.rdb_soft.generate_and_execute(user_request)
+                context = action_input.get("context")
+                results = await rdb_query_llm(user_request, context)
                 return f"조회된 데이터: {results.get('results_count', 0)}개 결과"
             
             else:
