@@ -15,6 +15,8 @@ from src.utils.tools import (
     RDBQueryLLMInput,
     RDBModifyInput
 )
+from pydantic import BaseModel
+
 
 logger = get_logger("rdb-tool")
 
@@ -728,3 +730,60 @@ async def rdb_modify(
             pass
         raise ToolError("rdb_modify", f"데이터베이스 오류: {str(e)}", e)
 
+
+#인자 없이 호출하면 eiExchangeRate 테이블의 date 기준 MAX값을 반환
+
+class RDBGetLatestEcosDateInput(BaseModel):
+    """eiExchangeRate 등에서 최신 날짜를 조회하기 위한 입력 스키마"""
+    table_name: str = "eiExchangeRate"
+    date_column: str = "date"
+
+
+@tool(args_schema=RDBGetLatestEcosDateInput)
+async def rdb_get_latest_ecos_date(
+    table_name: str = "eiExchangeRate",
+    date_column: str = "date",
+) -> Dict[str, Any]:
+    """
+    주어진 테이블에서 가장 최신 날짜를 조회한다.
+
+    주로 ECOS ETL이 어디까지 적재되어 있는지 확인할 때 사용할 수 있다.
+    """
+    start_time = time.time()
+    conn = _db_connection.get_connection()
+    cursor = conn.cursor()
+    try:
+        sql = f"SELECT MAX({date_column}) AS max_date FROM {table_name}"
+        logger.info(
+            "rdb_get_latest_ecos_date 실행",
+            {"table": table_name, "date_column": date_column, "sql": sql},
+        )
+        cursor.execute(sql)
+        row = cursor.fetchone()
+        max_date = row["max_date"] if row and row["max_date"] is not None else None
+
+        elapsed = time.time() - start_time
+        logger.info(
+            "rdb_get_latest_ecos_date 완료",
+            {
+                "table": table_name,
+                "date_column": date_column,
+                "max_date": str(max_date),
+                "elapsed": elapsed,
+            },
+        )
+        return {
+            "table": table_name,
+            "date_column": date_column,
+            "max_date": max_date,
+            "elapsed": elapsed,
+        }
+    except Exception as e:
+        logger.error(
+            "rdb_get_latest_ecos_date 실패",
+            {"table": table_name, "date_column": date_column, "error": str(e)},
+            exc_info=True,
+        )
+        raise ToolError("rdb_get_latest_ecos_date", f"최신 날짜 조회 실패: {str(e)}", e)
+    finally:
+        cursor.close()
