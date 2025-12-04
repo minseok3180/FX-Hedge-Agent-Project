@@ -1,11 +1,20 @@
 from openai import OpenAI
-from news_search import fetch_news
 from dotenv import load_dotenv
 import os
+import sys
+import importlib.util
+from pathlib import Path
 
 load_dotenv()
 API_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=API_KEY)
+
+# news_search를 직접 로드 (__init__.py를 거치지 않음)
+news_search_path = Path(__file__).parent / "news_search.py"
+spec = importlib.util.spec_from_file_location("news_search", news_search_path)
+news_search_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(news_search_module)
+fetch_news = news_search_module.fetch_news
 
 def analyze_news(news_list):
     news_list_str = "\n".join(news_list)
