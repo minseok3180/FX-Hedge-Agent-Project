@@ -38,7 +38,7 @@ def run_strategy_execution(
     asset_col: Optional[str] = None,
         sigma_asset_manual: float = 0.15,
         risk_aversion: float = 4.0,
-        alpha: float = 0.001,  # 일간 기준으로 조정 (0.05는 연율 기준으로 너무 큼)
+        alpha: float = 0.0001,  # 일간 기준으로 적절한 값 (0.01% 수준)
 ) -> dict:
     """
     환헷지 전략 실행 함수.
@@ -158,7 +158,7 @@ if __name__ == "__main__":
         asset_col=None,       # df.csv에 자산 가격 컬럼 있으면 이름 넣으면 됨
         sigma_asset_manual=0.15,
         risk_aversion=4.0,
-        alpha=0.05,
+        alpha=0.0001,  # 일간 기준으로 적절한 값 (0.01% 수준)
     )
     
     print("=== 환헷지 전략 실행 결과 ===")
