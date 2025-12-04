@@ -13,9 +13,9 @@ from src.utils.tools import (
     ToolError,
     RDBQueryHardInput,
     RDBQueryLLMInput,
-    RDBModifyInput
+    RDBModifyInput,
+    RDBGetLatestEcosDateInput,
 )
-from pydantic import BaseModel
 
 
 logger = get_logger("rdb-tool")
@@ -731,59 +731,84 @@ async def rdb_modify(
         raise ToolError("rdb_modify", f"데이터베이스 오류: {str(e)}", e)
 
 
-#인자 없이 호출하면 eiExchangeRate 테이블의 date 기준 MAX값을 반환
-
-class RDBGetLatestEcosDateInput(BaseModel):
-    """eiExchangeRate 등에서 최신 날짜를 조회하기 위한 입력 스키마"""
-    table_name: str = "eiExchangeRate"
-    date_column: str = "date"
-
+# ---------------------------------------------------------------------------
+# ECOS 최신 날짜 조회
+# ---------------------------------------------------------------------------
 
 @tool(args_schema=RDBGetLatestEcosDateInput)
+@handle_tool_error("rdb_get_latest_ecos_date")
 async def rdb_get_latest_ecos_date(
     table_name: str = "eiExchangeRate",
     date_column: str = "date",
 ) -> Dict[str, Any]:
     """
     주어진 테이블에서 가장 최신 날짜를 조회한다.
-
-    주로 ECOS ETL이 어디까지 적재되어 있는지 확인할 때 사용할 수 있다.
+    
+    ECOS ETL이 어디까지 적재되어 있는지 확인하거나,
+    데이터 업데이트 시 시작 날짜를 결정할 때 사용한다.
+    
+    Args:
+        table_name: 조회할 테이블명 (기본값: "eiExchangeRate")
+        date_column: 날짜 컬럼명 (기본값: "date")
+        
+    Returns:
+        최신 날짜 정보 딕셔너리
     """
     start_time = time.time()
-    conn = _db_connection.get_connection()
-    cursor = conn.cursor()
+    
+    logger.info(
+        f"🔧 [TOOL CALL] rdb_get_latest_ecos_date 실행",
+        {
+            "tool_name": "rdb_get_latest_ecos_date",
+            "table_name": table_name,
+            "date_column": date_column
+        }
+    )
+    
+    conn = _db_connection._get_connection()
+    
     try:
-        sql = f"SELECT MAX({date_column}) AS max_date FROM {table_name}"
-        logger.info(
-            "rdb_get_latest_ecos_date 실행",
-            {"table": table_name, "date_column": date_column, "sql": sql},
-        )
-        cursor.execute(sql)
-        row = cursor.fetchone()
-        max_date = row["max_date"] if row and row["max_date"] is not None else None
+        with conn.cursor() as cursor:
+            sql = f"SELECT MAX(`{date_column}`) AS max_date FROM `{table_name}`"
+            logger.info(
+                f"📝 [QUERY] 최신 날짜 조회",
+                {"table": table_name, "date_column": date_column, "sql": sql},
+            )
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            max_date = row["max_date"] if row and row.get("max_date") is not None else None
+            
+            # date 객체를 문자열로 변환
+            if max_date and hasattr(max_date, 'strftime'):
+                max_date_str = max_date.strftime("%Y-%m-%d")
+            else:
+                max_date_str = str(max_date) if max_date else None
 
-        elapsed = time.time() - start_time
-        logger.info(
-            "rdb_get_latest_ecos_date 완료",
-            {
+            elapsed = time.time() - start_time
+            
+            logger.info(
+                f"✅ [TOOL RESULT] rdb_get_latest_ecos_date 완료",
+                {
+                    "tool_name": "rdb_get_latest_ecos_date",
+                    "table": table_name,
+                    "date_column": date_column,
+                    "max_date": max_date_str,
+                    "elapsed_seconds": round(elapsed, 4),
+                },
+            )
+            
+            return {
                 "table": table_name,
                 "date_column": date_column,
-                "max_date": str(max_date),
+                "max_date": max_date,
+                "max_date_str": max_date_str,
                 "elapsed": elapsed,
-            },
-        )
-        return {
-            "table": table_name,
-            "date_column": date_column,
-            "max_date": max_date,
-            "elapsed": elapsed,
-        }
+                "status": "success"
+            }
     except Exception as e:
         logger.error(
-            "rdb_get_latest_ecos_date 실패",
+            f"❌ rdb_get_latest_ecos_date 실패",
             {"table": table_name, "date_column": date_column, "error": str(e)},
             exc_info=True,
         )
         raise ToolError("rdb_get_latest_ecos_date", f"최신 날짜 조회 실패: {str(e)}", e)
-    finally:
-        cursor.close()

@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 from src.utils.agents import BaseAgent
-from src.tools.rdb import rdb_query_hard, rdb_query_llm
+from src.tools.rdb import rdb_query_hard, rdb_query_llm, rdb_get_latest_ecos_date
 from src.tools.web_search import web_search
 from src.prompts.market_information_instruction import MARKET_INFORMATION_INSTRUCTION
 from src.utils.llm import call_gpt

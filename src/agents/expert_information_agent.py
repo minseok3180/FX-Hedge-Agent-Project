@@ -1,4 +1,9 @@
-# src/agents/expert_information.py
+# src/agents/expert_information_agent.py
+"""
+전문가 문서(hedge fund docs)에서 정보를 검색해 요약해주는 RAG 에이전트.
+
+vdb.py의 vdb_search를 사용하여 Qdrant에서 관련 청크를 검색한다.
+"""
 
 from __future__ import annotations
 
@@ -6,21 +11,56 @@ from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
-from src.agents.base_agent import BaseAgent
+from src.utils.agents import BaseAgent
 from src.utils.logger import get_logger
 from src.utils.settings import settings
+from src.tools.vdb import vdb_search
 
-from src.prompts.docs_prompt import (
-    DOCS_SYSTEM_PROMPT,
-    DOCS_USER_PROMPT_TEMPLATE,
-)
-from src.tools.expert_information_tools import (
-    expert_search,
-    build_expert_context_from_hits,
-)
+# 프롬프트
+from src.prompts.expert_information_instruction import EXPERT_INFORMATION_INSTRUCTION
+
+# RAG 답변 생성용 사용자 프롬프트 템플릿
+EXPERT_USER_PROMPT_TEMPLATE = """## 사용자 질문
+{user_question}
+
+## 검색된 컨텍스트
+{retrieved_context}
+
+위 컨텍스트를 바탕으로 사용자의 질문에 답변해주세요. 출처를 반드시 명시하세요."""
 
 
 logger = get_logger(__name__)
+
+
+def build_expert_context_from_hits(hits: List[Dict[str, Any]]) -> str:
+    """
+    Qdrant 검색 결과에서 LLM 컨텍스트 문자열을 생성한다.
+    
+    Args:
+        hits: vdb_search 결과 리스트 (각 항목에 payload, score 포함)
+        
+    Returns:
+        LLM에 전달할 컨텍스트 문자열
+    """
+    if not hits:
+        return "검색 결과가 없습니다."
+    
+    context_parts = []
+    for i, hit in enumerate(hits, 1):
+        payload = hit.get("payload", {})
+        text = payload.get("text", "")
+        source = payload.get("source", "알 수 없음")
+        source_type = payload.get("source_type", "")
+        title = payload.get("title", "")
+        score = hit.get("score", 0)
+        
+        context_parts.append(
+            f"[문서 {i}] (출처: {source}, 유형: {source_type}, 유사도: {score:.3f})\n"
+            f"제목: {title}\n"
+            f"내용: {text}\n"
+        )
+    
+    return "\n---\n".join(context_parts)
 
 
 class ExpertInformationAgent(BaseAgent):
@@ -29,25 +69,29 @@ class ExpertInformationAgent(BaseAgent):
 
     구조:
       1) 사용자의 질문을 OpenAI 임베딩으로 변환
-      2) expert_search 툴로 Qdrant에서 관련 청크 검색
+      2) vdb_search 툴로 Qdrant에서 관련 청크 검색
       3) 검색된 컨텍스트를 LLM 프롬프트에 넣어 요약/분석
       4) 최종 답변과 hits를 함께 반환
     """
 
     def __init__(
         self,
-        embedding_model: str = "text-embedding-3-large",
+        embedding_model: Optional[str] = None,
         collection_name: Optional[str] = None,
     ):
         super().__init__(
             name="expert_information",
             description="전문가 리포트/문서(hedge docs)를 기반으로 환헤지 관련 정보를 제공하는 에이전트",
         )
-        self.embedding_model = embedding_model
+        self.embedding_model = embedding_model or getattr(
+            settings,
+            "openai_embedding_model",
+            "text-embedding-3-large",
+        )
         self.collection_name = collection_name or getattr(
             settings,
-            "hedge_docs_collection",
-            "hedge_fund_docs",
+            "qdrant_collection",
+            "Hedge_Expert",
         )
         self._embed_client = OpenAI(api_key=settings.openai_api_key)
 
@@ -78,14 +122,19 @@ class ExpertInformationAgent(BaseAgent):
             # 1) 쿼리 임베딩 생성
             query_embedding = await self._embed_text(task)
 
-            # 2) 전문가 문서 검색 (툴 사용)
-            hits = await expert_search.ainvoke(
+            # 2) vdb_search 툴로 Qdrant 검색
+            logger.info(
+                f"🔍 전문가 문서 검색 시작",
                 {
-                    "query_vector": query_embedding,
-                    "top_k": top_k,
-                    "collection_name": self.collection_name,
+                    "collection": self.collection_name,
+                    "top_k": top_k
                 }
             )
+            hits = await vdb_search.ainvoke({
+                "query_vector": query_embedding,
+                "collection_name": self.collection_name,
+                "limit": top_k,
+            })
 
             # hits가 비었으면 그대로 안내 메시지 반환
             if not hits:
@@ -93,6 +142,7 @@ class ExpertInformationAgent(BaseAgent):
                     "전문가 문서 벡터 DB에서 관련된 내용을 찾지 못했습니다. "
                     "지금은 일반적인 금융 지식 수준에서만 답변이 가능할 것 같습니다."
                 )
+                logger.warning(f"⚠️ 전문가 문서 검색 결과 없음")
                 return {
                     "agent": self.name,
                     "task": task,
@@ -101,13 +151,18 @@ class ExpertInformationAgent(BaseAgent):
                     "hits": [],
                 }
 
+            logger.info(
+                f"✅ 전문가 문서 검색 완료",
+                {"hits_count": len(hits)}
+            )
+
             # 3) LLM 컨텍스트 문자열 생성
             context_text = build_expert_context_from_hits(hits)
 
             # 4) LLM 프롬프트 구성
-            system_prompt = DOCS_SYSTEM_PROMPT
+            system_prompt = EXPERT_INFORMATION_INSTRUCTION
 
-            user_prompt = DOCS_USER_PROMPT_TEMPLATE.format(
+            user_prompt = EXPERT_USER_PROMPT_TEMPLATE.format(
                 user_question=task,
                 retrieved_context=context_text,
             )
@@ -130,7 +185,7 @@ class ExpertInformationAgent(BaseAgent):
 
         except Exception as e:
             logger.error(
-                "ExpertInformationAgent.execute failed",
+                "❌ ExpertInformationAgent.execute failed",
                 {"error": str(e)},
                 exc_info=True,
             )
@@ -145,13 +200,13 @@ class ExpertInformationAgent(BaseAgent):
     async def _embed_text(self, text: str) -> List[float]:
         """
         OpenAI 임베딩 API를 사용해 쿼리 텍스트를 벡터로 변환.
-        (툴이 아니라 에이전트 내부에서만 사용)
         """
         logger.info(
-            "Creating embedding for expert query",
+            f"📊 임베딩 생성 중",
             {"model": self.embedding_model},
         )
-        res = await self._embed_client.embeddings.create(
+        # OpenAI 클라이언트는 동기식이므로 create 사용
+        res = self._embed_client.embeddings.create(
             model=self.embedding_model,
             input=text,
         )

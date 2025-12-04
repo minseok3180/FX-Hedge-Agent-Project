@@ -12,8 +12,6 @@ from src.utils.tools import (
     VDBCreateCollectionInput,
     VDBUpsertPointsInput
 )
-from pydantic import BaseModel
-from openai import OpenAI
 
 
 
@@ -353,84 +351,3 @@ async def vdb_upsert_points(
             exc_info=True
         )
         raise ToolError("vdb_upsert_points", f"포인트 업서트 실패: {str(e)}", e)
-
-
-
-# OpenAI 임베딩 클라이언트 (지연 초기화)
-_openai_client: Optional[OpenAI] = None
-
-
-def _get_openai_client() -> OpenAI:
-    """OpenAI 클라이언트 반환 (지연 초기화)"""
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = OpenAI(api_key=settings.openai_api_key)
-    return _openai_client
-
-
-class VDBTextSearchInput(BaseModel):
-    """텍스트 쿼리를 임베딩 후 Qdrant에서 검색하기 위한 입력 스키마"""
-    query_text: str
-    collection_name: str = _default_collection
-    top_k: int = 5
-    embedding_model: Optional[str] = None  # None이면 기본값 사용
-
-
-@tool(args_schema=VDBTextSearchInput)
-async def vdb_text_search(
-    query_text: str,
-    collection_name: str = _default_collection,
-    top_k: int = 5,
-    embedding_model: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """
-    텍스트 쿼리를 OpenAI 임베딩으로 변환한 뒤, Qdrant에서 검색을 수행한다.
-
-    ExpertInformationAgent가 하던
-    1) 임베딩 생성 + 2) Qdrant 검색
-    단계를 하나의 툴로 제공한다.
-    """
-    client = _get_qdrant_client()
-    oa_client = _get_openai_client()
-    model_name = embedding_model or "text-embedding-3-large"
-
-    try:
-        logger.info(
-            "vdb_text_search 실행",
-            {"collection": collection_name, "top_k": top_k, "model": model_name},
-        )
-        emb_res = oa_client.embeddings.create(
-            model=model_name,
-            input=query_text,
-        )
-        query_vector = emb_res.data[0].embedding
-
-        search_result = client.search(
-            collection_name=collection_name,
-            query_vector=query_vector,
-            limit=top_k,
-        )
-
-        results: List[Dict[str, Any]] = []
-        for scored_point in search_result:
-            results.append(
-                {
-                    "id": scored_point.id,
-                    "score": float(scored_point.score),
-                    "payload": scored_point.payload or {},
-                }
-            )
-
-        logger.info(
-            "vdb_text_search 완료",
-            {"collection": collection_name, "top_k": top_k, "hits": len(results)},
-        )
-        return results
-
-    except Exception as e:
-        logger.error(
-            "vdb_text_search 실패",
-            {"collection": collection_name, "error": str(e)},
-            exc_info=True,
-        )
-        raise ToolError("vdb_text_search", f"텍스트 기반 벡터 검색 실패: {str(e)}", e)
