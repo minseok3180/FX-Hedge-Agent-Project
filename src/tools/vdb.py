@@ -13,6 +13,9 @@ from src.utils.tools import (
     VDBUpsertPointsInput
 )
 
+
+
+
 logger = get_logger("vdb-tool")
 
 # 전역 Qdrant 클라이언트 인스턴스
@@ -348,4 +351,3 @@ async def vdb_upsert_points(
             exc_info=True
         )
         raise ToolError("vdb_upsert_points", f"포인트 업서트 실패: {str(e)}", e)
-

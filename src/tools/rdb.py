@@ -13,8 +13,12 @@ from src.utils.tools import (
     ToolError,
     RDBQueryHardInput,
     RDBQueryLLMInput,
-    RDBModifyInput
+    RDBModifyInput,
+    RDBGetLatestEcosDateInput,
+    UserInfoGetInput,
+    UserInfoUpsertInput,
 )
+
 
 logger = get_logger("rdb-tool")
 
@@ -48,14 +52,26 @@ DB_METADATA = {
             }
         },
         "user_info": {
-            "description": "사용자 정보 테이블",
+            "description": "사용자 프로필/자산 정보 테이블",
             "columns": {
-                "user_id": {"type": "VARCHAR", "description": "사용자 ID"},
-                "user_name": {"type": "VARCHAR", "description": "사용자 이름"},
-                "user_krw": {"type": "DECIMAL", "description": "사용자 보유 KRW 금액"},
-                "user_usd": {"type": "DECIMAL", "description": "사용자 보유 USD 금액"},
-            }
-        }
+                "user_id": {"type": "VARCHAR", "description": "사용자 ID (PK)"},
+                "name": {"type": "VARCHAR", "description": "사용자 이름"},
+                "age": {"type": "INT", "description": "나이"},
+                "gender": {"type": "VARCHAR", "description": "성별"},
+                "total_assets": {
+                    "type": "DECIMAL",
+                    "description": "총 재산 (KRW 기준, 원 단위)",
+                },
+                "overseas_assets": {
+                    "type": "DECIMAL",
+                    "description": "해외 재산 (환산 KRW 기준, 원 단위)",
+                },
+                "risk_profile": {
+                    "type": "VARCHAR",
+                    "description": "투자 성향 (conservative, moderate, aggressive 등)",
+                },
+            },
+        },
     }
 }
 
@@ -728,3 +744,310 @@ async def rdb_modify(
             pass
         raise ToolError("rdb_modify", f"데이터베이스 오류: {str(e)}", e)
 
+
+# ---------------------------------------------------------------------------
+# ECOS 최신 날짜 조회
+# ---------------------------------------------------------------------------
+
+@tool(args_schema=RDBGetLatestEcosDateInput)
+@handle_tool_error("rdb_get_latest_ecos_date")
+async def rdb_get_latest_ecos_date(
+    table_name: str = "eiExchangeRate",
+    date_column: str = "date",
+) -> Dict[str, Any]:
+    """
+    주어진 테이블에서 가장 최신 날짜를 조회한다.
+    
+    ECOS ETL이 어디까지 적재되어 있는지 확인하거나,
+    데이터 업데이트 시 시작 날짜를 결정할 때 사용한다.
+    
+    Args:
+        table_name: 조회할 테이블명 (기본값: "eiExchangeRate")
+        date_column: 날짜 컬럼명 (기본값: "date")
+        
+    Returns:
+        최신 날짜 정보 딕셔너리
+    """
+    start_time = time.time()
+    
+    logger.info(
+        f"🔧 [TOOL CALL] rdb_get_latest_ecos_date 실행",
+        {
+            "tool_name": "rdb_get_latest_ecos_date",
+            "table_name": table_name,
+            "date_column": date_column
+        }
+    )
+    
+    conn = _db_connection._get_connection()
+    
+    try:
+        with conn.cursor() as cursor:
+            sql = f"SELECT MAX(`{date_column}`) AS max_date FROM `{table_name}`"
+            logger.info(
+                f"📝 [QUERY] 최신 날짜 조회",
+                {"table": table_name, "date_column": date_column, "sql": sql},
+            )
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            max_date = row["max_date"] if row and row.get("max_date") is not None else None
+            
+            # date 객체를 문자열로 변환
+            if max_date and hasattr(max_date, 'strftime'):
+                max_date_str = max_date.strftime("%Y-%m-%d")
+            else:
+                max_date_str = str(max_date) if max_date else None
+
+            elapsed = time.time() - start_time
+            
+            logger.info(
+                f"✅ [TOOL RESULT] rdb_get_latest_ecos_date 완료",
+                {
+                    "tool_name": "rdb_get_latest_ecos_date",
+                    "table": table_name,
+                    "date_column": date_column,
+                    "max_date": max_date_str,
+                    "elapsed_seconds": round(elapsed, 4),
+                },
+            )
+            
+            return {
+                "table": table_name,
+                "date_column": date_column,
+                "max_date": max_date,
+                "max_date_str": max_date_str,
+                "elapsed": elapsed,
+                "status": "success"
+            }
+    except Exception as e:
+        logger.error(
+            f"❌ rdb_get_latest_ecos_date 실패",
+            {"table": table_name, "date_column": date_column, "error": str(e)},
+            exc_info=True,
+        )
+        raise ToolError("rdb_get_latest_ecos_date", f"최신 날짜 조회 실패: {str(e)}", e)
+
+
+# ---------------------------------------------------------------------------
+# 사용자 정보 조회/수정 전용 툴
+# ---------------------------------------------------------------------------
+
+
+@tool(args_schema=UserInfoGetInput)
+@handle_tool_error("user_info_get")
+async def user_info_get(user_id: str) -> Dict[str, Any]:
+    """
+    user_info 테이블에서 특정 사용자의 정보를 조회한다.
+
+    Args:
+        user_id: 조회할 사용자 ID
+
+    Returns:
+        {
+          "status": "success",
+          "found": bool,
+          "user_info": {...}  # 찾은 경우에만
+        }
+    """
+    logger.info(
+        "🔧 [TOOL CALL] user_info_get 실행",
+        {"tool_name": "user_info_get", "user_id": user_id},
+    )
+
+    conn = _db_connection._get_connection()
+
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT 
+                    user_id,
+                    name,
+                    age,
+                    gender,
+                    total_assets,
+                    overseas_assets,
+                    risk_profile
+                FROM user_info
+                WHERE user_id = %s
+                LIMIT 1
+            """
+            logger.info(
+                "📝 [QUERY] 사용자 정보 조회",
+                {"sql": sql.strip(), "user_id": user_id},
+            )
+            cursor.execute(sql, (user_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                logger.info(
+                    "ℹ️ [TOOL RESULT] user_info_get - 사용자 정보 없음",
+                    {"user_id": user_id},
+                )
+                return {
+                    "status": "success",
+                    "found": False,
+                    "user_info": None,
+                    "message": f"사용자 ID '{user_id}'에 대한 정보를 찾을 수 없습니다.",
+                }
+
+            user_info = dict(row)
+            logger.info(
+                "✅ [TOOL RESULT] user_info_get 완료",
+                {"user_id": user_id, "user_info_preview": user_info},
+            )
+            return {
+                "status": "success",
+                "found": True,
+                "user_info": user_info,
+            }
+    except Exception as e:
+        logger.error(
+            "❌ user_info_get 실패",
+            {"user_id": user_id, "error": str(e)},
+            exc_info=True,
+        )
+        raise ToolError("user_info_get", f"사용자 정보 조회 실패: {str(e)}", e)
+
+
+@tool(args_schema=UserInfoUpsertInput)
+@handle_tool_error("user_info_upsert")
+async def user_info_upsert(
+    user_id: str,
+    name: str,
+    age: int,
+    gender: str,
+    total_assets: float,
+    overseas_assets: float,
+    risk_profile: str,
+) -> Dict[str, Any]:
+    """
+    user_info 테이블에 사용자 정보를 입력/수정(Upsert)한다.
+
+    - user_id가 없으면 INSERT
+    - user_id가 이미 있으면 UPDATE
+
+    Args:
+        user_id: 사용자 ID (PK)
+        name: 사용자 이름
+        age: 나이
+        gender: 성별
+        total_assets: 총 재산 (KRW 기준)
+        overseas_assets: 해외 재산 (KRW 기준)
+        risk_profile: 투자 성향
+
+    Returns:
+        {
+          "status": "success",
+          "affected_rows": int,
+          "operation": "insert" | "update",
+          "user_info": {...}  # 최종 저장된 값
+        }
+    """
+    logger.info(
+        "🔧 [TOOL CALL] user_info_upsert 실행",
+        {
+            "tool_name": "user_info_upsert",
+            "user_id": user_id,
+            "name": name,
+            "age": age,
+            "gender": gender,
+            "total_assets": total_assets,
+            "overseas_assets": overseas_assets,
+            "risk_profile": risk_profile,
+        },
+    )
+
+    conn = _db_connection._get_connection()
+
+    try:
+        with conn.cursor() as cursor:
+            # 현재 존재 여부 확인
+            check_sql = "SELECT COUNT(*) AS cnt FROM user_info WHERE user_id = %s"
+            cursor.execute(check_sql, (user_id,))
+            row = cursor.fetchone()
+            exists = bool(row and row.get("cnt", 0) > 0)
+
+            # Upsert 쿼리 (INSERT ... ON DUPLICATE KEY UPDATE)
+            sql = """
+                INSERT INTO user_info (
+                    user_id, name, age, gender, total_assets, overseas_assets, risk_profile
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    age = VALUES(age),
+                    gender = VALUES(gender),
+                    total_assets = VALUES(total_assets),
+                    overseas_assets = VALUES(overseas_assets),
+                    risk_profile = VALUES(risk_profile)
+            """
+
+            params = (
+                user_id,
+                name,
+                age,
+                gender,
+                total_assets,
+                overseas_assets,
+                risk_profile,
+            )
+
+            logger.info(
+                "📝 [QUERY] 사용자 정보 Upsert 실행",
+                {"sql": sql.strip(), "params": params},
+            )
+            affected_rows = cursor.execute(sql, params)
+            conn.commit()
+
+            operation = "update" if exists else "insert"
+
+            # 최종 저장된 레코드 다시 조회
+            cursor.execute(
+                """
+                SELECT 
+                    user_id,
+                    name,
+                    age,
+                    gender,
+                    total_assets,
+                    overseas_assets,
+                    risk_profile
+                FROM user_info
+                WHERE user_id = %s
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            saved_row = cursor.fetchone()
+            saved_info = dict(saved_row) if saved_row else None
+
+            logger.info(
+                "✅ [TOOL RESULT] user_info_upsert 완료",
+                {
+                    "user_id": user_id,
+                    "operation": operation,
+                    "affected_rows": affected_rows,
+                    "saved_info_preview": saved_info,
+                },
+            )
+
+            return {
+                "status": "success",
+                "operation": operation,
+                "affected_rows": affected_rows,
+                "user_info": saved_info,
+            }
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        logger.error(
+            "❌ user_info_upsert 실패",
+            {
+                "user_id": user_id,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
+        raise ToolError("user_info_upsert", f"사용자 정보 Upsert 실패: {str(e)}", e)
