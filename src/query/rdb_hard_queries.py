@@ -7,6 +7,9 @@ Placeholder 지원:
 사용 예시:
 - Placeholder 사용: WHERE date = '{date}' → state에서 date 값으로 자동 치환
 - 파라미터 바인딩: WHERE date = %s → execute() 호출 시 params로 전달
+
+안녕하세요
+
 """
 
 rdb_hard_queries = {
