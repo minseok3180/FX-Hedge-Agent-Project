@@ -14,6 +14,9 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix,
             미국수출금액, 
             미국수입금액, 
             외환보유액, 
@@ -42,6 +45,9 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix,
             미국수출금액, 
             미국수입금액, 
             외환보유액, 
@@ -70,6 +76,9 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix,
             미국수출금액, 
             미국수입금액, 
             외환보유액, 
