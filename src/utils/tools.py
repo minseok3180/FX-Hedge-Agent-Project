@@ -1,9 +1,17 @@
 """Tool 관련 유틸리티 (에러 처리, 스키마, decorator 통합)"""
-from typing import List, Dict, Any, Optional, Tuple, Callable
+from typing import List, Dict, Any, Optional, Tuple, Callable, Union
 from functools import wraps
 from src.utils.logger import get_logger
 
 logger = get_logger("tools-utils")
+
+# LangGraph Command import
+try:
+    from langgraph.types import Command
+    LANGGRAPH_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_AVAILABLE = False
+    Command = None
 
 # ============================================================================
 # LangChain Tool Decorator
@@ -95,7 +103,7 @@ class VDBSearchInput(BaseModel):
     """VDB 검색 입력 스키마"""
     query_vector: List[float] = Field(
         description="검색할 벡터",
-        examples=[[0.1, 0.2, 0.3, ...]]
+        examples=[[0.1, 0.2, 0.3, 0.4, 0.5]]
     )
     collection_name: str = Field(
         default="fx_hedge_data",
@@ -161,7 +169,7 @@ class ToolError(Exception):
 
 def handle_tool_error(tool_name: str):
     """
-    Tool 함수의 에러 처리를 통일하는 데코레이터
+    Tool 함수의 에러 처리를 통일하는 데코레이터 (LangSmith traceable 포함)
     
     Args:
         tool_name: Tool 이름
@@ -172,6 +180,14 @@ def handle_tool_error(tool_name: str):
             ...
     """
     def decorator(func):
+        # LangSmith traceable 데코레이터 적용 (가능한 경우)
+        try:
+            from langsmith import traceable
+            if traceable:
+                func = traceable(name=f"tool_{tool_name}", run_type="tool")(func)
+        except ImportError:
+            pass
+        
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
             try:
@@ -255,8 +271,7 @@ def get_all_tools() -> List[Any]:
     from src.tools.rdb import (
         rdb_query_hard,
         rdb_query_llm,
-        rdb_modify,
-        rdb_modify_by_key
+        rdb_modify
     )
     from src.tools.vdb import (
         vdb_search,
@@ -269,7 +284,6 @@ def get_all_tools() -> List[Any]:
         rdb_query_hard,
         rdb_query_llm,
         rdb_modify,
-        rdb_modify_by_key,
         vdb_search,
         vdb_create_collection,
         vdb_upsert_points,

@@ -14,22 +14,32 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
-            us_ex, 
-            us_im, 
-            reserve, 
-            us_reserve, 
-            us_export, 
-            us_import,
-            base, 
-            market, 
-            consumer, 
-            exp_rate, 
-            im_rate, 
-            us_current, 
-            us_growth, 
+            미국수출금액, 
+            미국수입금액, 
+            외환보유액, 
+            미국외환보유액, 
+            한국은행기준금리, 
+            정부대출금금리, 
+            시장금리, 
+            소비자물가지수, 
+            수출물가지수, 
+            수입물가지수, 
+            경제성장률, 
+            미국경제성장률, 
+            gdp, 
             us_gdp, 
+<<<<<<< HEAD
             us_stock, 
-            us_interest
+            us_interest, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix
+=======
+            주가지수, 
+            미국주가지수, 
+            한국금리, 
+            미국금리
+>>>>>>> 55ae140f171f2520c95f314b12431a15f958fda4
         FROM eiExchangeRate
         WHERE date = '{date}'
         ORDER BY date DESC
@@ -40,22 +50,32 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
-            us_ex, 
-            us_im, 
-            reserve, 
-            us_reserve, 
-            us_export, 
-            us_import,
-            base, 
-            market, 
-            consumer, 
-            exp_rate, 
-            im_rate, 
-            us_current, 
-            us_growth, 
+            미국수출금액, 
+            미국수입금액, 
+            외환보유액, 
+            미국외환보유액, 
+            한국은행기준금리, 
+            정부대출금금리, 
+            시장금리, 
+            소비자물가지수, 
+            수출물가지수, 
+            수입물가지수, 
+            경제성장률, 
+            미국경제성장률, 
+            gdp, 
             us_gdp, 
+<<<<<<< HEAD
             us_stock, 
-            us_interest
+            us_interest, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix
+=======
+            주가지수, 
+            미국주가지수, 
+            한국금리, 
+            미국금리
+>>>>>>> 55ae140f171f2520c95f314b12431a15f958fda4
         FROM eiExchangeRate
         WHERE date BETWEEN %s AND %s
         ORDER BY date DESC
@@ -66,22 +86,32 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
-            us_ex, 
-            us_im, 
-            reserve, 
-            us_reserve, 
-            us_export, 
-            us_import,
-            base, 
-            market, 
-            consumer, 
-            exp_rate, 
-            im_rate, 
-            us_current, 
-            us_growth, 
+            미국수출금액, 
+            미국수입금액, 
+            외환보유액, 
+            미국외환보유액, 
+            한국은행기준금리, 
+            정부대출금금리, 
+            시장금리, 
+            소비자물가지수, 
+            수출물가지수, 
+            수입물가지수, 
+            경제성장률, 
+            미국경제성장률, 
+            gdp, 
             us_gdp, 
+<<<<<<< HEAD
             us_stock, 
-            us_interest
+            us_interest, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix
+=======
+            주가지수, 
+            미국주가지수, 
+            한국금리, 
+            미국금리
+>>>>>>> 55ae140f171f2520c95f314b12431a15f958fda4
         FROM eiExchangeRate
         ORDER BY date DESC
         LIMIT %s
@@ -92,6 +122,13 @@ rdb_hard_queries = {
         FROM eiExchangeRate
         WHERE date = %s
         LIMIT 1
+    """,
+
+    "get_1y_history": """
+        SELECT date, usdkrw, us_stock
+        FROM eiExchangeRate
+        WHERE date >= DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
+        ORDER BY date ASC
     """,
     
     # User Info 쿼리
