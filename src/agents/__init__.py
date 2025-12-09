@@ -5,6 +5,7 @@ from .reask_agent import ReAskAgent
 from .react_agent import ReActAgent
 from .handsoff_agent import HandsOffAgent
 from .expert_information_agent import ExpertInformationAgent
+from .user_information_agent import UserInformationAgent
 
 __all__ = [
     "BaseAgent",
@@ -13,5 +14,6 @@ __all__ = [
     "ReActAgent",
     "HandsOffAgent",
     "ExpertInformationAgent",
+    "UserInformationAgent",
 ]
 

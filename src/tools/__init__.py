@@ -59,6 +59,8 @@ from src.utils.tools import (
     RDBQueryHardInput,
     RDBQueryLLMInput,
     RDBGetLatestEcosDateInput,
+    UserInfoGetInput,
+    UserInfoUpsertInput,
     VDBSearchInput,
     WebSearchInput,
     # 스키마 (독립 스크립트용)
@@ -101,6 +103,8 @@ __all__ = [
     "RDBQueryHardInput",
     "RDBQueryLLMInput",
     "RDBGetLatestEcosDateInput",
+    "UserInfoGetInput",
+    "UserInfoUpsertInput",
     "RDBModifyInput",
     "VDBSearchInput",
     "VDBCreateCollectionInput",

@@ -100,13 +100,16 @@ rdb_hard_queries = {
         LIMIT 1
     """,
     
-    # User Info 쿼리
+    # User Info 쿼리 (새 사용자 프로필 스키마 기준)
     "get_user_info_by_id": """
         SELECT 
             user_id,
-            user_name,
-            user_krw,
-            user_usd
+            name,
+            age,
+            gender,
+            total_assets,
+            overseas_assets,
+            risk_profile
         FROM user_info
         WHERE user_id = '{user_id}'
         LIMIT 1
@@ -115,9 +118,12 @@ rdb_hard_queries = {
     "get_all_users": """
         SELECT 
             user_id,
-            user_name,
-            user_krw,
-            user_usd
+            name,
+            age,
+            gender,
+            total_assets,
+            overseas_assets,
+            risk_profile
         FROM user_info
     """,
 }
