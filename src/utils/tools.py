@@ -87,18 +87,6 @@ class RDBModifyInput(BaseModel):
     )
 
 
-class RDBModifyByKeyInput(BaseModel):
-    """RDB 수정 쿼리 (키 기반) 입력 스키마"""
-    query_key: str = Field(
-        description="실행할 쿼리의 키",
-        examples=["update_exchange_rate"]
-    )
-    params: Optional[Tuple[Any, ...]] = Field(
-        default=None,
-        description="쿼리 파라미터 (튜플)"
-    )
-
-
 class VDBSearchInput(BaseModel):
     """VDB 검색 입력 스키마"""
     query_vector: List[float] = Field(
@@ -152,6 +140,60 @@ class WebSearchInput(BaseModel):
         ge=1,
         le=10,
         description="반환할 결과 수 (최대 10)"
+    )
+
+
+class RDBGetLatestEcosDateInput(BaseModel):
+    """ECOS 데이터 최신 날짜 조회 입력 스키마"""
+    table_name: str = Field(
+        default="eiExchangeRate",
+        description="조회할 테이블명"
+    )
+    date_column: str = Field(
+        default="date",
+        description="날짜 컬럼명"
+    )
+
+
+class UserInfoGetInput(BaseModel):
+    """사용자 정보 조회 입력 스키마"""
+    user_id: str = Field(
+        description="조회할 사용자 ID",
+        examples=["user_001"],
+    )
+
+
+class UserInfoUpsertInput(BaseModel):
+    """사용자 정보 입력/수정(Upsert) 입력 스키마"""
+    user_id: str = Field(
+        description="사용자 ID (PK, 중복 시 업데이트)",
+        examples=["user_001"],
+    )
+    name: str = Field(
+        description="사용자 이름",
+        examples=["홍길동"],
+    )
+    age: int = Field(
+        description="사용자 나이",
+        ge=0,
+        le=150,
+        examples=[35],
+    )
+    gender: str = Field(
+        description="성별 (예: 'male', 'female', 'other')",
+        examples=["male"],
+    )
+    total_assets: float = Field(
+        description="총 재산 (KRW 기준, 원 단위)",
+        examples=[100_000_000.0],
+    )
+    overseas_assets: float = Field(
+        description="해외 재산 (환산 KRW 기준, 원 단위)",
+        examples=[30_000_000.0],
+    )
+    risk_profile: str = Field(
+        description="투자 성향 (예: 'conservative', 'moderate', 'aggressive')",
+        examples=["moderate"],
     )
 
 # ============================================================================
@@ -263,7 +305,13 @@ def handle_tool_error(tool_name: str):
 
 def get_all_tools() -> List[Any]:
     """
-    모든 tool 함수를 반환 (LangChain bind_tools용)
+    에이전트에서 사용할 tool 함수를 반환 (LangChain bind_tools용)
+    
+    Note:
+        읽기/검색 전용 툴만 포함.
+        DB 수정(rdb_modify), 컬렉션 생성(vdb_create_collection), 
+        포인트 업서트(vdb_upsert_points), 문서 인제스트(ingest_documents_tool),
+        ECOS 파이프라인(ecos_run_pipeline)은 독립 스크립트로 사용.
     
     Returns:
         Tool 함수 리스트
@@ -271,7 +319,39 @@ def get_all_tools() -> List[Any]:
     from src.tools.rdb import (
         rdb_query_hard,
         rdb_query_llm,
-        rdb_modify
+        rdb_get_latest_ecos_date,
+        user_info_get,
+    )
+    from src.tools.vdb import vdb_search
+    from src.tools.web_search import web_search
+    
+    return [
+        # RDB 조회 도구
+        rdb_query_hard,
+        rdb_query_llm,
+        rdb_get_latest_ecos_date,
+        user_info_get,
+        # VDB 검색 도구
+        vdb_search,
+        # 웹 검색 도구
+        web_search,
+    ]
+
+
+def get_all_tools_with_write() -> List[Any]:
+    """
+    모든 tool 함수를 반환 (쓰기 권한 포함, 특수 용도)
+    
+    Returns:
+        Tool 함수 리스트 (읽기 + 쓰기)
+    """
+    from src.tools.rdb import (
+        rdb_query_hard,
+        rdb_query_llm,
+        rdb_modify,
+        rdb_get_latest_ecos_date,
+        user_info_get,
+        user_info_upsert,
     )
     from src.tools.vdb import (
         vdb_search,
@@ -281,13 +361,19 @@ def get_all_tools() -> List[Any]:
     from src.tools.web_search import web_search
     
     return [
+        # RDB 도구
         rdb_query_hard,
         rdb_query_llm,
         rdb_modify,
+        rdb_get_latest_ecos_date,
+        user_info_get,
+        user_info_upsert,
+        # VDB 도구
         vdb_search,
         vdb_create_collection,
         vdb_upsert_points,
-        web_search
+        # 웹 검색 도구
+        web_search,
     ]
 
 

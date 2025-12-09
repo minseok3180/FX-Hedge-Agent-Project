@@ -5,11 +5,15 @@ from typing import Dict, Any, Optional, List, Literal, Annotated, TYPE_CHECKING
 from operator import add
 from src.utils.settings import settings
 from src.agents.market_information_agent import MarketInformationAgent
+from src.agents.expert_information_agent import ExpertInformationAgent
+from src.agents.user_information_agent import UserInformationAgent
 from src.agents.reask_agent import ReAskAgent
 from src.agents.react_agent import ReActAgent
 from src.agents.handsoff_agent import HandsOffAgent
 from src.prompts.supervisor_routing import SUPERVISOR_ROUTING_SYSTEM_PROMPT, SUPERVISOR_ROUTING_USER_PROMPT_TEMPLATE
-from src.prompts.market_information_description import MARKET_INFORMATION_DESCRIPTION
+from src.prompts.market_information_routing import MARKET_INFORMATION_ROUTING
+from src.prompts.expert_information_routing import EXPERT_INFORMATION_ROUTING
+from src.prompts.user_information_routing import USER_INFORMATION_ROUTING
 from src.utils.logger import get_logger
 from src.utils.llm import LANGCHAIN_OPENAI_AVAILABLE, convert_dict_messages_to_langchain
 from src.utils.state import AgentState, AdditionalInfo, Reference, Action
@@ -87,13 +91,19 @@ class Supervisor:
         # 하위 에이전트 초기화
         self.agents = {
             "market_information": MarketInformationAgent(),
+            "expert_information": ExpertInformationAgent(),
+            "user_information": UserInformationAgent(),
             "reask": ReAskAgent(),
             "react": ReActAgent(),
             "handsoff": HandsOffAgent()
         }
         
-        # 에이전트 설명 (라우팅에 사용)
-        self.agent_descriptions = MARKET_INFORMATION_DESCRIPTION
+        # 에이전트 설명 (라우팅에 사용) - 모든 에이전트 라우팅 설명 결합
+        self.agent_descriptions = (
+            f"{MARKET_INFORMATION_ROUTING}\n\n"
+            f"{EXPERT_INFORMATION_ROUTING}\n\n"
+            f"{USER_INFORMATION_ROUTING}"
+        )
         
         # LangGraph 그래프 구성
         if LANGGRAPH_AVAILABLE:
