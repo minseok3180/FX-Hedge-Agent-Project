@@ -17,6 +17,16 @@ qdrant-client==1.7.0
 # HTTP 요청
 requests==2.31.0
 
+# 데이터 처리
+pandas>=2.0.0
+numpy>=1.24.0
+
+# 문서 처리 (PDF, 웹 스크래핑)
+PyMuPDF>=1.23.0  # fitz 모듈
+trafilatura>=1.6.0  # 웹 페이지 텍스트 추출
+beautifulsoup4>=4.12.0  # HTML 파싱
+tiktoken>=0.5.0  # 토큰 카운팅
+
 # 유틸리티
 python-dotenv==1.0.0
 
