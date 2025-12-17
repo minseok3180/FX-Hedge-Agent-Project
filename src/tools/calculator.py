@@ -4,6 +4,20 @@ import pandas as pd
 from typing import Optional, Tuple, Dict, Any
 import os
 from dotenv import load_dotenv
+from src.utils.tools import (
+    tool,
+    handle_tool_error,
+    ComputeExpectedFxReturnInput,
+    ComputeOptimalHedgeWeightInput,
+    ComputeLogReturnsFromPricesInput,
+    ComputeSigmaAndRhoFromReturnsInput,
+    ComputeFxVolAndRhoFromCsvInput,
+    ComputeFxVolAndRhoFromRdbInput,
+    ComputeAllInput,
+)
+from src.utils.logger import get_logger
+
+logger = get_logger("calculator-tool")
 
 
 class CalculatorTool:
@@ -374,3 +388,256 @@ class CalculatorTool:
             "w_H_star": w_H_star,
             "w_UH_star": None if w_H_star is None else (1.0 - w_H_star),
         }
+
+
+# ============================================================================
+# Tool 함수들 (LangChain @tool decorator 사용)
+# ============================================================================
+
+@tool(args_schema=ComputeExpectedFxReturnInput)
+@handle_tool_error("compute_expected_fx_return")
+async def compute_expected_fx_return(
+    signal_score: float,
+    alpha: float = 0.05
+) -> float:
+    """
+    환율 기대수익률 E[R_FX]를 계산하는 tool.
+    
+    E[R_FX] = S * alpha
+    
+    Args:
+        signal_score: 환율 시그널 점수 S (범위: -1 ~ +1, -1 = 강한 달러 약세, +1 = 강한 달러 강세)
+        alpha: 스케일링 파라미터 (기본값: 0.05)
+        
+    Returns:
+        E[R_FX] (기대 환율 수익률)
+    """
+    calculator = CalculatorTool()
+    result = calculator.compute_expected_fx_return(signal_score, alpha)
+    logger.info(
+        f"🔧 [TOOL CALL] compute_expected_fx_return 실행",
+        {"signal_score": signal_score, "alpha": alpha, "result": result}
+    )
+    return result
+
+
+@tool(args_schema=ComputeOptimalHedgeWeightInput)
+@handle_tool_error("compute_optimal_hedge_weight")
+async def compute_optimal_hedge_weight(
+    sigma_asset: float,
+    sigma_fx: float,
+    rho: float,
+    expected_fx_return: float,
+    risk_aversion: float,
+    clip: bool = True
+) -> Optional[float]:
+    """
+    최적 환헷지 비중 w_H^*을 계산하는 tool.
+    
+    w_H^* = (1 + rho * sigma_asset / sigma_fx) - E[R_FX] / (lambda * sigma_fx^2)
+    
+    Args:
+        sigma_asset: 해외자산 수익률 변동성 σ_Asset (예: S&P500 일간 로그수익률 표준편차)
+        sigma_fx: 환율 수익률 변동성 σ_FX (예: USD/KRW 일간 로그수익률 표준편차)
+        rho: 자산 수익률과 환율 수익률의 상관계수 (Corr(R_asset, R_FX))
+        expected_fx_return: 기대 환율 수익률 E[R_FX]
+        risk_aversion: 위험회피도 λ (값이 클수록 보수적, 일반적으로 1 ~ 10 정도)
+        clip: True면 결과를 [0, 1] 범위로 클리핑
+        
+    Returns:
+        최적 환헷지 비중 w_H^* (0 ~ 1 사이), 
+        sigma_fx 또는 risk_aversion이 0 이하인 경우 None 반환
+    """
+    calculator = CalculatorTool()
+    result = calculator.compute_optimal_hedge_weight(
+        sigma_asset, sigma_fx, rho, expected_fx_return,
+        risk_aversion, clip, debug=False
+    )
+    logger.info(
+        f"🔧 [TOOL CALL] compute_optimal_hedge_weight 실행",
+        {
+            "sigma_asset": sigma_asset,
+            "sigma_fx": sigma_fx,
+            "rho": rho,
+            "expected_fx_return": expected_fx_return,
+            "risk_aversion": risk_aversion,
+            "result": result
+        }
+    )
+    return result
+
+
+@tool(args_schema=ComputeLogReturnsFromPricesInput)
+@handle_tool_error("compute_log_returns_from_prices")
+async def compute_log_returns_from_prices(
+    prices: list
+) -> list:
+    """
+    가격 시계열로부터 로그수익률(log return)을 계산하는 tool.
+    
+    R_t = ln(P_t / P_{t-1})
+    
+    Args:
+        prices: 가격 시계열 (리스트)
+        
+    Returns:
+        로그수익률 배열 (리스트로 변환)
+    """
+    calculator = CalculatorTool()
+    prices_series = pd.Series(prices)
+    result = calculator.compute_log_returns_from_prices(prices_series)
+    logger.info(
+        f"🔧 [TOOL CALL] compute_log_returns_from_prices 실행",
+        {"prices_count": len(prices), "returns_count": len(result)}
+    )
+    return result.tolist()
+
+
+@tool(args_schema=ComputeSigmaAndRhoFromReturnsInput)
+@handle_tool_error("compute_sigma_and_rho_from_returns")
+async def compute_sigma_and_rho_from_returns(
+    asset_returns: list,
+    fx_returns: list
+) -> Dict[str, float]:
+    """
+    자산 수익률과 환율 수익률로부터 
+    σ_Asset, σ_FX, ρ를 계산하는 tool.
+    
+    Args:
+        asset_returns: 자산(예: S&P500) 일간 수익률 시계열
+        fx_returns: 환율(예: USD/KRW) 일간 수익률 시계열
+        
+    Returns:
+        {"sigma_asset": float, "sigma_fx": float, "rho": float} 딕셔너리
+    """
+    calculator = CalculatorTool()
+    asset_arr = np.array(asset_returns)
+    fx_arr = np.array(fx_returns)
+    sigma_asset, sigma_fx, rho = calculator.compute_sigma_and_rho_from_returns(asset_arr, fx_arr)
+    result = {
+        "sigma_asset": sigma_asset,
+        "sigma_fx": sigma_fx,
+        "rho": rho
+    }
+    logger.info(
+        f"🔧 [TOOL CALL] compute_sigma_and_rho_from_returns 실행",
+        result
+    )
+    return result
+
+
+@tool(args_schema=ComputeFxVolAndRhoFromCsvInput)
+@handle_tool_error("compute_fx_vol_and_rho_from_csv")
+async def compute_fx_vol_and_rho_from_csv(
+    csv_path: Optional[str] = None,
+    fx_col: str = "usdkrw(target)",
+    asset_col: Optional[str] = None,
+) -> Dict[str, float]:
+    """
+    CSV 파일 또는 DataFrame에서 환율 변동성 σ_FX와 상관계수 ρ를 계산하는 tool.
+    
+    Args:
+        csv_path: CSV 파일 경로 (예: 'notebook/yonju/df.csv'). df가 제공되면 무시됨.
+        fx_col: 환율 컬럼명 (예: 'usdkrw(target)')
+        asset_col: 자산(예: S&P500) 가격 또는 수익률 컬럼명.
+                  None이면 ρ는 0.0으로 반환.
+        
+    Returns:
+        {"sigma_fx": float, "rho": float} 딕셔너리
+    """
+    calculator = CalculatorTool()
+    sigma_fx, rho = calculator.compute_fx_vol_and_rho_from_csv(
+        csv_path=csv_path,
+        fx_col=fx_col,
+        asset_col=asset_col,
+        df=None
+    )
+    result = {
+        "sigma_fx": sigma_fx,
+        "rho": rho
+    }
+    logger.info(
+        f"🔧 [TOOL CALL] compute_fx_vol_and_rho_from_csv 실행",
+        {"csv_path": csv_path, "fx_col": fx_col, "asset_col": asset_col, **result}
+    )
+    return result
+
+
+@tool(args_schema=ComputeFxVolAndRhoFromRdbInput)
+@handle_tool_error("compute_fx_vol_and_rho_from_rdb")
+async def compute_fx_vol_and_rho_from_rdb(
+    days: int = 252,
+    asset_col: Optional[str] = None,
+) -> Dict[str, float]:
+    """
+    RDB에서 환율 데이터를 가져와서 변동성과 상관계수를 계산하는 tool.
+    
+    Args:
+        days: 조회할 최근 일수 (기본값: 252일, 약 1년)
+        asset_col: 자산(예: S&P500) 가격 또는 수익률 컬럼명.
+                  None이면 ρ는 0.0으로 반환.
+        
+    Returns:
+        {"sigma_fx": float, "rho": float} 딕셔너리
+    """
+    calculator = CalculatorTool()
+    sigma_fx, rho = calculator.compute_fx_vol_and_rho_from_rdb(
+        days=days,
+        asset_col=asset_col
+    )
+    result = {
+        "sigma_fx": sigma_fx,
+        "rho": rho
+    }
+    logger.info(
+        f"🔧 [TOOL CALL] compute_fx_vol_and_rho_from_rdb 실행",
+        {"days": days, "asset_col": asset_col, **result}
+    )
+    return result
+
+
+@tool(args_schema=ComputeAllInput)
+@handle_tool_error("compute_all")
+async def compute_all(
+    signal_score: float,
+    csv_path: str,
+    sigma_asset: float = 0.15,
+    risk_aversion: float = 4.0,
+    alpha: float = 0.05,
+    fx_col: str = "usdkrw(target)",
+    asset_col: Optional[str] = None,
+    clip: bool = True
+) -> Dict[str, Any]:
+    """
+    모든 계산을 한 번에 수행하는 통합 tool.
+    
+    Args:
+        signal_score: 환율 시그널 점수
+        csv_path: CSV 파일 경로
+        sigma_asset: 해외자산 수익률 변동성
+        risk_aversion: 위험회피도
+        alpha: 스케일링 파라미터
+        fx_col: 환율 컬럼명
+        asset_col: 자산 가격 컬럼명
+        clip: True면 결과를 [0, 1] 범위로 클리핑
+        
+    Returns:
+        계산 결과를 담은 딕셔너리
+    """
+    calculator = CalculatorTool()
+    result = calculator.compute_all(
+        signal_score=signal_score,
+        csv_path=csv_path,
+        sigma_asset=sigma_asset,
+        risk_aversion=risk_aversion,
+        alpha=alpha,
+        fx_col=fx_col,
+        asset_col=asset_col,
+        clip=clip,
+        debug=False
+    )
+    logger.info(
+        f"🔧 [TOOL CALL] compute_all 실행",
+        {"signal_score": signal_score, "csv_path": csv_path, "w_H_star": result.get("w_H_star")}
+    )
+    return result

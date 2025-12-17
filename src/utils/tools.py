@@ -196,6 +196,159 @@ class UserInfoUpsertInput(BaseModel):
         examples=["moderate"],
     )
 
+
+# ============================================================================
+# Calculator Tool 스키마
+# ============================================================================
+
+class ComputeExpectedFxReturnInput(BaseModel):
+    """환율 기대수익률 계산 입력 스키마"""
+    signal_score: float = Field(
+        description="환율 시그널 점수 S (범위: -1 ~ +1, -1 = 강한 달러 약세, +1 = 강한 달러 강세)",
+        ge=-1.0,
+        le=1.0,
+        examples=[0.5]
+    )
+    alpha: float = Field(
+        default=0.05,
+        description="스케일링 파라미터 (기본값: 0.05)",
+        examples=[0.05]
+    )
+
+
+class ComputeOptimalHedgeWeightInput(BaseModel):
+    """최적 환헷지 비중 계산 입력 스키마"""
+    sigma_asset: float = Field(
+        description="해외자산 수익률 변동성 σ_Asset (예: S&P500 일간 로그수익률 표준편차)",
+        gt=0.0,
+        examples=[0.15]
+    )
+    sigma_fx: float = Field(
+        description="환율 수익률 변동성 σ_FX (예: USD/KRW 일간 로그수익률 표준편차)",
+        gt=0.0,
+        examples=[0.02]
+    )
+    rho: float = Field(
+        description="자산 수익률과 환율 수익률의 상관계수 (Corr(R_asset, R_FX))",
+        ge=-1.0,
+        le=1.0,
+        examples=[0.3]
+    )
+    expected_fx_return: float = Field(
+        description="기대 환율 수익률 E[R_FX]",
+        examples=[0.0001]
+    )
+    risk_aversion: float = Field(
+        description="위험회피도 λ (값이 클수록 보수적, 일반적으로 1 ~ 10 정도)",
+        gt=0.0,
+        examples=[4.0]
+    )
+    clip: bool = Field(
+        default=True,
+        description="True면 결과를 [0, 1] 범위로 클리핑",
+        examples=[True]
+    )
+
+
+class ComputeLogReturnsFromPricesInput(BaseModel):
+    """로그수익률 계산 입력 스키마"""
+    prices: list = Field(
+        description="가격 시계열 (리스트 또는 pandas Series를 리스트로 변환)",
+        examples=[[100.0, 101.0, 102.0, 101.5]]
+    )
+
+
+class ComputeSigmaAndRhoFromReturnsInput(BaseModel):
+    """자산 수익률과 환율 수익률로부터 변동성 및 상관계수 계산 입력 스키마"""
+    asset_returns: list = Field(
+        description="자산(예: S&P500) 일간 수익률 시계열",
+        examples=[[0.01, -0.02, 0.015, 0.005]]
+    )
+    fx_returns: list = Field(
+        description="환율(예: USD/KRW) 일간 수익률 시계열",
+        examples=[[0.001, -0.001, 0.002, -0.0005]]
+    )
+
+
+class ComputeFxVolAndRhoFromCsvInput(BaseModel):
+    """CSV 파일에서 환율 변동성 및 상관계수 계산 입력 스키마"""
+    csv_path: Optional[str] = Field(
+        default=None,
+        description="CSV 파일 경로 (예: 'notebook/yonju/df.csv'). df가 제공되면 무시됨.",
+        examples=["notebook/yonju/df.csv"]
+    )
+    fx_col: str = Field(
+        default="usdkrw(target)",
+        description="환율 컬럼명 (예: 'usdkrw(target)')",
+        examples=["usdkrw(target)"]
+    )
+    asset_col: Optional[str] = Field(
+        default=None,
+        description="자산(예: S&P500) 가격 또는 수익률 컬럼명. None이면 ρ는 0.0으로 반환.",
+        examples=["SPY_close"]
+    )
+
+
+class ComputeFxVolAndRhoFromRdbInput(BaseModel):
+    """RDB에서 환율 변동성 및 상관계수 계산 입력 스키마"""
+    days: int = Field(
+        default=252,
+        description="조회할 최근 일수 (기본값: 252일, 약 1년)",
+        ge=1,
+        examples=[252]
+    )
+    asset_col: Optional[str] = Field(
+        default=None,
+        description="자산(예: S&P500) 가격 또는 수익률 컬럼명. None이면 ρ는 0.0으로 반환.",
+        examples=["SPY_close"]
+    )
+
+
+class ComputeAllInput(BaseModel):
+    """모든 계산을 한 번에 수행하는 통합 tool 입력 스키마"""
+    signal_score: float = Field(
+        description="환율 시그널 점수",
+        ge=-1.0,
+        le=1.0,
+        examples=[0.5]
+    )
+    csv_path: str = Field(
+        description="CSV 파일 경로",
+        examples=["notebook/yonju/df.csv"]
+    )
+    sigma_asset: float = Field(
+        default=0.15,
+        description="해외자산 수익률 변동성",
+        gt=0.0,
+        examples=[0.15]
+    )
+    risk_aversion: float = Field(
+        default=4.0,
+        description="위험회피도",
+        gt=0.0,
+        examples=[4.0]
+    )
+    alpha: float = Field(
+        default=0.05,
+        description="스케일링 파라미터",
+        examples=[0.05]
+    )
+    fx_col: str = Field(
+        default="usdkrw(target)",
+        description="환율 컬럼명",
+        examples=["usdkrw(target)"]
+    )
+    asset_col: Optional[str] = Field(
+        default=None,
+        description="자산 가격 컬럼명",
+        examples=["SPY_close"]
+    )
+    clip: bool = Field(
+        default=True,
+        description="True면 결과를 [0, 1] 범위로 클리핑",
+        examples=[True]
+    )
+
 # ============================================================================
 # Tool 에러 처리
 # ============================================================================
@@ -324,6 +477,15 @@ def get_all_tools() -> List[Any]:
     )
     from src.tools.vdb import vdb_search
     from src.tools.web_search import web_search
+    from src.tools.calculator_kcw import (
+        compute_expected_fx_return,
+        compute_optimal_hedge_weight,
+        compute_log_returns_from_prices,
+        compute_sigma_and_rho_from_returns,
+        compute_fx_vol_and_rho_from_csv,
+        compute_fx_vol_and_rho_from_rdb,
+        compute_all,
+    )
     
     return [
         # RDB 조회 도구
@@ -335,6 +497,14 @@ def get_all_tools() -> List[Any]:
         vdb_search,
         # 웹 검색 도구
         web_search,
+        # Calculator 도구
+        compute_expected_fx_return,
+        compute_optimal_hedge_weight,
+        compute_log_returns_from_prices,
+        compute_sigma_and_rho_from_returns,
+        compute_fx_vol_and_rho_from_csv,
+        compute_fx_vol_and_rho_from_rdb,
+        compute_all,
     ]
 
 
