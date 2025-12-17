@@ -49,6 +49,9 @@ DB_METADATA = {
                 "미국주가지수": {"type": "DOUBLE", "description": "미국 주가지수"},
                 "한국금리": {"type": "DOUBLE", "description": "한국 금리"},
                 "미국금리": {"type": "DOUBLE", "description": "미국 금리"},
+                "SPY_close": {"type": "DOUBLE", "description": "SPY 종가"},
+                "VIX": {"type": "DOUBLE", "description": "VIX 지표"},
+                "DXY": {"type": "DOUBLE", "description": "DXY 지표"},
             }
         },
         "user_info": {
