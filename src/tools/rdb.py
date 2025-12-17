@@ -58,20 +58,18 @@ DB_METADATA = {
             "description": "사용자 프로필/자산 정보 테이블",
             "columns": {
                 "user_id": {"type": "VARCHAR", "description": "사용자 ID (PK)"},
-                "name": {"type": "VARCHAR", "description": "사용자 이름"},
-                "age": {"type": "INT", "description": "나이"},
-                "gender": {"type": "VARCHAR", "description": "성별"},
-                "total_assets": {
+                "user_name": {"type": "VARCHAR", "description": "사용자 이름"},
+                "user_krw": {
                     "type": "DECIMAL",
-                    "description": "총 재산 (KRW 기준, 원 단위)",
+                    "description": "한국 원화 자산 (KRW 기준, 원 단위)",
                 },
-                "overseas_assets": {
+                "user_usd": {
                     "type": "DECIMAL",
-                    "description": "해외 재산 (환산 KRW 기준, 원 단위)",
+                    "description": "미국 달러 자산 (USD 기준, 달러 단위)",
                 },
-                "risk_profile": {
-                    "type": "VARCHAR",
-                    "description": "투자 성향 (conservative, moderate, aggressive 등)",
+                "risk_level": {
+                    "type": "DOUBLE",
+                    "description": "리스크 레벨 (0~1 범위의 연속값)",
                 },
             },
         },
@@ -864,12 +862,10 @@ async def user_info_get(user_id: str) -> Dict[str, Any]:
             sql = """
                 SELECT 
                     user_id,
-                    name,
-                    age,
-                    gender,
-                    total_assets,
-                    overseas_assets,
-                    risk_profile
+                    user_name,
+                    user_krw,
+                    user_usd,
+                    risk_level
                 FROM user_info
                 WHERE user_id = %s
                 LIMIT 1
@@ -916,12 +912,9 @@ async def user_info_get(user_id: str) -> Dict[str, Any]:
 @handle_tool_error("user_info_upsert")
 async def user_info_upsert(
     user_id: str,
-    name: str,
-    age: int,
-    gender: str,
-    total_assets: float,
-    overseas_assets: float,
-    risk_profile: str,
+    user_name: str,
+    user_krw: float,
+    user_usd: float,
 ) -> Dict[str, Any]:
     """
     user_info 테이블에 사용자 정보를 입력/수정(Upsert)한다.
@@ -931,12 +924,9 @@ async def user_info_upsert(
 
     Args:
         user_id: 사용자 ID (PK)
-        name: 사용자 이름
-        age: 나이
-        gender: 성별
-        total_assets: 총 재산 (KRW 기준)
-        overseas_assets: 해외 재산 (KRW 기준)
-        risk_profile: 투자 성향
+        user_name: 사용자 이름
+        user_krw: 한국 원화 자산 (KRW 기준, 원 단위)
+        user_usd: 미국 달러 자산 (USD 기준, 달러 단위)
 
     Returns:
         {
@@ -951,12 +941,9 @@ async def user_info_upsert(
         {
             "tool_name": "user_info_upsert",
             "user_id": user_id,
-            "name": name,
-            "age": age,
-            "gender": gender,
-            "total_assets": total_assets,
-            "overseas_assets": overseas_assets,
-            "risk_profile": risk_profile,
+            "user_name": user_name,
+            "user_krw": user_krw,
+            "user_usd": user_usd,
         },
     )
 
@@ -973,25 +960,19 @@ async def user_info_upsert(
             # Upsert 쿼리 (INSERT ... ON DUPLICATE KEY UPDATE)
             sql = """
                 INSERT INTO user_info (
-                    user_id, name, age, gender, total_assets, overseas_assets, risk_profile
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    user_id, user_name, user_krw, user_usd
+                ) VALUES (%s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
-                    name = VALUES(name),
-                    age = VALUES(age),
-                    gender = VALUES(gender),
-                    total_assets = VALUES(total_assets),
-                    overseas_assets = VALUES(overseas_assets),
-                    risk_profile = VALUES(risk_profile)
+                    user_name = VALUES(user_name),
+                    user_krw = VALUES(user_krw),
+                    user_usd = VALUES(user_usd)
             """
 
             params = (
                 user_id,
-                name,
-                age,
-                gender,
-                total_assets,
-                overseas_assets,
-                risk_profile,
+                user_name,
+                user_krw,
+                user_usd,
             )
 
             logger.info(
@@ -1008,12 +989,10 @@ async def user_info_upsert(
                 """
                 SELECT 
                     user_id,
-                    name,
-                    age,
-                    gender,
-                    total_assets,
-                    overseas_assets,
-                    risk_profile
+                    user_name,
+                    user_krw,
+                    user_usd,
+                    risk_level
                 FROM user_info
                 WHERE user_id = %s
                 LIMIT 1

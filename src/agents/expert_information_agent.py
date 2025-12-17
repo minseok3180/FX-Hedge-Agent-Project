@@ -8,12 +8,14 @@ vdb.py의 vdb_search를 사용하여 Qdrant에서 관련 청크를 검색한다.
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+import time
 
 from openai import OpenAI
 
 from src.utils.agents import BaseAgent
 from src.utils.logger import get_logger
 from src.utils.settings import settings
+from src.utils.state import Reference, Action, create_reference_and_action_from_tool_result
 from src.tools.vdb import vdb_search
 
 # 프롬프트
@@ -112,29 +114,83 @@ class ExpertInformationAgent(BaseAgent):
               "task": <원본 task>,
               "status": "success" | "error",
               "answer": <LLM이 정리한 최종 답변>,
-              "hits": [...],  # Qdrant 검색 결과
+              "hits": [...],          # Qdrant 검색 결과
+              "reference": [...],     # Reference 리스트
+              "action": [...],        # Action 리스트
             }
         """
         context = context or {}
         top_k = int(context.get("top_k", 5))
 
+        execution_start_time = time.time()
+        execution_id = f"expert_info_{int(execution_start_time * 1000)}"
+
+        logger.info(
+            "🚀 [EXECUTION START] 전문가 정보 에이전트 실행 시작",
+            {
+                "execution_id": execution_id,
+                "agent_name": self.name,
+                "task": task,
+                "task_length": len(task),
+                "has_context": bool(context),
+                "context_keys": list(context.keys()),
+                "top_k": top_k,
+            },
+        )
+
+        references: List[Reference] = []
+        actions: List[Action] = []
+
         try:
             # 1) 쿼리 임베딩 생성
+            embed_start = time.time()
             query_embedding = await self._embed_text(task)
+            embed_elapsed = time.time() - embed_start
+            logger.info(
+                "✅ [EMBEDDING COMPLETE] 임베딩 생성 완료",
+                {
+                    "execution_id": execution_id,
+                    "elapsed_seconds": round(embed_elapsed, 3),
+                    "embedding_dim": len(query_embedding) if query_embedding else 0,
+                },
+            )
 
             # 2) vdb_search 툴로 Qdrant 검색
+            search_start = time.time()
             logger.info(
-                f"🔍 전문가 문서 검색 시작",
+                "🔍 [VDB SEARCH START] 전문가 문서 검색 시작",
                 {
+                    "execution_id": execution_id,
                     "collection": self.collection_name,
-                    "top_k": top_k
+                    "top_k": top_k,
+                },
+            )
+            hits = await vdb_search.ainvoke(
+                {
+                    "query_vector": query_embedding,
+                    "collection_name": self.collection_name,
+                    "limit": top_k,
                 }
             )
-            hits = await vdb_search.ainvoke({
-                "query_vector": query_embedding,
-                "collection_name": self.collection_name,
-                "limit": top_k,
-            })
+            search_elapsed = time.time() - search_start
+
+            # Reference / Action 생성 (vdb_search)
+            reference, action = create_reference_and_action_from_tool_result(
+                tool_name="vdb_search",
+                tool_result=hits,
+                source="vdb",
+                query=f"collection={self.collection_name}, top_k={top_k}",
+                input_params={
+                    "collection_name": self.collection_name,
+                    "limit": top_k,
+                },
+                metadata={
+                    "collection_name": self.collection_name,
+                    "top_k": top_k,
+                },
+            )
+            references.append(reference)
+            actions.append(action)
 
             # hits가 비었으면 그대로 안내 메시지 반환
             if not hits:
@@ -142,18 +198,30 @@ class ExpertInformationAgent(BaseAgent):
                     "전문가 문서 벡터 DB에서 관련된 내용을 찾지 못했습니다. "
                     "지금은 일반적인 금융 지식 수준에서만 답변이 가능할 것 같습니다."
                 )
-                logger.warning(f"⚠️ 전문가 문서 검색 결과 없음")
+                logger.warning(
+                    "⚠️ [VDB SEARCH EMPTY] 전문가 문서 검색 결과 없음",
+                    {
+                        "execution_id": execution_id,
+                        "elapsed_seconds": round(search_elapsed, 3),
+                    },
+                )
                 return {
                     "agent": self.name,
                     "task": task,
                     "status": "success",
                     "answer": msg,
                     "hits": [],
+                    "reference": [ref.__dict__ for ref in references],
+                    "action": [act.__dict__ for act in actions],
                 }
 
             logger.info(
-                f"✅ 전문가 문서 검색 완료",
-                {"hits_count": len(hits)}
+                "✅ [VDB SEARCH COMPLETE] 전문가 문서 검색 완료",
+                {
+                    "execution_id": execution_id,
+                    "elapsed_seconds": round(search_elapsed, 3),
+                    "hits_count": len(hits),
+                },
             )
 
             # 3) LLM 컨텍스트 문자열 생성
@@ -173,7 +241,28 @@ class ExpertInformationAgent(BaseAgent):
             ]
 
             # 5) LLM 호출
+            llm_start = time.time()
             answer = await self._call_llm(messages, temperature=0.2)
+            llm_elapsed = time.time() - llm_start
+
+            logger.info(
+                "✅ [LLM COMPLETE] 전문가 답변 생성 완료",
+                {
+                    "execution_id": execution_id,
+                    "elapsed_seconds": round(llm_elapsed, 3),
+                    "answer_length": len(answer) if answer else 0,
+                },
+            )
+
+            total_elapsed = time.time() - execution_start_time
+            logger.info(
+                "🎉 [EXECUTION COMPLETE] 전문가 정보 에이전트 실행 완료",
+                {
+                    "execution_id": execution_id,
+                    "total_elapsed_seconds": round(total_elapsed, 3),
+                    "status": "success",
+                },
+            )
 
             return {
                 "agent": self.name,
@@ -181,12 +270,20 @@ class ExpertInformationAgent(BaseAgent):
                 "status": "success",
                 "answer": answer,
                 "hits": hits,
+                "reference": [ref.__dict__ for ref in references],
+                "action": [act.__dict__ for act in actions],
             }
 
         except Exception as e:
+            total_elapsed = time.time() - execution_start_time
             logger.error(
-                "❌ ExpertInformationAgent.execute failed",
-                {"error": str(e)},
+                "❌ [EXECUTION ERROR] ExpertInformationAgent.execute failed",
+                {
+                    "execution_id": execution_id,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "total_elapsed_seconds": round(total_elapsed, 3),
+                },
                 exc_info=True,
             )
             return {
@@ -195,6 +292,8 @@ class ExpertInformationAgent(BaseAgent):
                 "status": "error",
                 "answer": f"전문가 정보 검색 중 오류가 발생했습니다: {e}",
                 "hits": [],
+                "reference": [ref.__dict__ for ref in references],
+                "action": [act.__dict__ for act in actions],
             }
 
     async def _embed_text(self, text: str) -> List[float]:
