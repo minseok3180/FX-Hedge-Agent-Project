@@ -2,11 +2,11 @@
 import pymysql
 import json
 import re
-from typing import List, Dict, Any, Optional, Tuple, Union
+import time
+from typing import List, Dict, Any, Optional, Tuple
 from src.utils.settings import settings
 from src.utils.logger import get_logger
 from src.query.rdb_hard_queries import rdb_hard_queries
-from src.query.rdb_modify_queries import rdb_modify_queries
 from src.utils.tools import (
     tool,
     handle_tool_error,
@@ -14,8 +14,11 @@ from src.utils.tools import (
     RDBQueryHardInput,
     RDBQueryLLMInput,
     RDBModifyInput,
-    RDBModifyByKeyInput
+    RDBGetLatestEcosDateInput,
+    UserInfoGetInput,
+    UserInfoUpsertInput,
 )
+
 
 logger = get_logger("rdb-tool")
 
@@ -27,18 +30,51 @@ DB_METADATA = {
             "description": "환율 및 경제 지표 데이터 테이블",
             "columns": {
                 "date": {"type": "DATE", "description": "날짜 (YYYY-MM-DD)"},
-                "usdkrw": {"type": "DECIMAL", "description": "USD/KRW 환율"},
+                "usdkrw": {"type": "DOUBLE", "description": "USD/KRW 환율"},
+                "미국수출금액": {"type": "DOUBLE", "description": "미국 수출 금액"},
+                "미국수입금액": {"type": "DOUBLE", "description": "미국 수입 금액"},
+                "외환보유액": {"type": "DOUBLE", "description": "외환 보유액"},
+                "미국외환보유액": {"type": "DOUBLE", "description": "미국 외환 보유액"},
+                "한국은행기준금리": {"type": "DOUBLE", "description": "한국은행 기준금리"},
+                "정부대출금금리": {"type": "DOUBLE", "description": "정부 대출금 금리"},
+                "시장금리": {"type": "DOUBLE", "description": "시장 금리"},
+                "소비자물가지수": {"type": "DOUBLE", "description": "소비자 물가지수"},
+                "수출물가지수": {"type": "DOUBLE", "description": "수출 물가지수"},
+                "수입물가지수": {"type": "DOUBLE", "description": "수입 물가지수"},
+                "경제성장률": {"type": "DOUBLE", "description": "경제 성장률"},
+                "미국경제성장률": {"type": "DOUBLE", "description": "미국 경제 성장률"},
+                "gdp": {"type": "DOUBLE", "description": "GDP"},
+                "us_gdp": {"type": "DOUBLE", "description": "미국 GDP"},
+                "주가지수": {"type": "DOUBLE", "description": "주가지수"},
+                "미국주가지수": {"type": "DOUBLE", "description": "미국 주가지수"},
+                "한국금리": {"type": "DOUBLE", "description": "한국 금리"},
+                "미국금리": {"type": "DOUBLE", "description": "미국 금리"},
+                "SPY_close": {"type": "DOUBLE", "description": "SPY 종가"},
+                "VIX": {"type": "DOUBLE", "description": "VIX 지표"},
+                "DXY": {"type": "DOUBLE", "description": "DXY 지표"},
             }
         },
         "user_info": {
-            "description": "사용자 정보 테이블",
+            "description": "사용자 프로필/자산 정보 테이블",
             "columns": {
-                "user_id": {"type": "VARCHAR", "description": "사용자 ID"},
-                "user_name": {"type": "VARCHAR", "description": "사용자 이름"},
-                "user_krw": {"type": "DECIMAL", "description": "사용자 보유 KRW 금액"},
-                "user_usd": {"type": "DECIMAL", "description": "사용자 보유 USD 금액"},
-            }
-        }
+                "user_id": {"type": "VARCHAR", "description": "사용자 ID (PK)"},
+                "name": {"type": "VARCHAR", "description": "사용자 이름"},
+                "age": {"type": "INT", "description": "나이"},
+                "gender": {"type": "VARCHAR", "description": "성별"},
+                "total_assets": {
+                    "type": "DECIMAL",
+                    "description": "총 재산 (KRW 기준, 원 단위)",
+                },
+                "overseas_assets": {
+                    "type": "DECIMAL",
+                    "description": "해외 재산 (환산 KRW 기준, 원 단위)",
+                },
+                "risk_profile": {
+                    "type": "VARCHAR",
+                    "description": "투자 성향 (conservative, moderate, aggressive 등)",
+                },
+            },
+        },
     }
 }
 
@@ -51,7 +87,7 @@ FEW_SHOT_EXAMPLES = [
     },
     {
         "user_request": "최근 10일간의 환율과 기준금리 데이터를 가져와줘",
-        "sql_query": "SELECT date, usdkrw, base FROM eiExchangeRate ORDER BY date DESC LIMIT 10",
+        "sql_query": "SELECT date, usdkrw, 한국은행기준금리 FROM eiExchangeRate ORDER BY date DESC LIMIT 10",
         "explanation": "최신 데이터를 날짜 내림차순으로 정렬하여 조회"
     },
     {
@@ -61,7 +97,7 @@ FEW_SHOT_EXAMPLES = [
     },
     {
         "user_request": "미국 금리가 5% 이상인 날짜들의 환율을 조회해줘",
-        "sql_query": "SELECT date, usdkrw, us_interest FROM eiExchangeRate WHERE us_interest >= 5.0 ORDER BY date DESC",
+        "sql_query": "SELECT date, usdkrw, 미국금리 FROM eiExchangeRate WHERE 미국금리 >= 5.0 ORDER BY date DESC",
         "explanation": "조건문을 사용하여 특정 조건을 만족하는 데이터만 필터링"
     }
 ]
@@ -242,35 +278,183 @@ async def rdb_query_hard(
             # Placeholder 사용 시 params는 None으로 설정
             params = None
         
+        # Tool 호출 및 쿼리 로깅
+        logger.info(
+            f"🔧 [TOOL CALL] rdb_query_hard 실행",
+            {
+                "tool_name": "rdb_query_hard",
+                "query_key": query_key,
+                "has_params": params is not None,
+                "params": str(params) if params else None,
+                "has_placeholder": bool(has_placeholder),
+                "state_provided": state is not None
+            }
+        )
+        
+        logger.info(
+            f"📝 [QUERY] RDB 쿼리 실행",
+            {
+                "query_key": query_key,
+                "query": query,
+                "params": str(params) if params else None
+            }
+        )
+        
         conn = _db_connection._get_connection()
-        with conn.cursor() as cursor:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
+        
+        # 쿼리 실행 전 상세 로깅
+        logger.debug(
+            f"🔍 [QUERY EXECUTION] 쿼리 실행 시작",
+            {
+                "query_key": query_key,
+                "query_preview": query[:200] if len(query) > 200 else query,
+                "query_length": len(query),
+                "has_params": params is not None,
+                "params": str(params) if params else None,
+                "has_state": state is not None,
+                "connection_open": conn.open if hasattr(conn, 'open') else None
+            }
+        )
+        
+        try:
+            with conn.cursor() as cursor:
+                execute_start = time.time()
+                
+                if params:
+                    logger.debug(
+                        f"📝 [QUERY EXECUTE] 파라미터화된 쿼리 실행",
+                        {
+                            "query_key": query_key,
+                            "params": str(params),
+                            "params_type": type(params).__name__
+                        }
+                    )
+                    cursor.execute(query, params)
+                else:
+                    logger.debug(
+                        f"📝 [QUERY EXECUTE] 일반 쿼리 실행",
+                        {
+                            "query_key": query_key,
+                            "query": query
+                        }
+                    )
+                    cursor.execute(query)
+                
+                execute_elapsed = time.time() - execute_start
+                logger.debug(
+                    f"⏱️  [QUERY EXECUTE] 쿼리 실행 완료",
+                    {
+                        "query_key": query_key,
+                        "execute_elapsed_seconds": round(execute_elapsed, 4),
+                        "rowcount": cursor.rowcount if hasattr(cursor, 'rowcount') else None
+                    }
+                )
+                
+                fetch_start = time.time()
+                results = cursor.fetchall()
+                fetch_elapsed = time.time() - fetch_start
+                
+                logger.debug(
+                    f"📊 [QUERY FETCH] 결과 조회 완료",
+                    {
+                        "query_key": query_key,
+                        "fetch_elapsed_seconds": round(fetch_elapsed, 4),
+                        "results_count": len(results) if results else 0
+                    }
+                )
+                
+                # DictCursor를 사용하므로 결과는 이미 딕셔너리 리스트
+                result_list = [dict(row) for row in results] if results else []
+                
+                logger.info(
+                    f"✅ [TOOL RESULT] rdb_query_hard 완료",
+                    {
+                        "tool_name": "rdb_query_hard",
+                        "query_key": query_key,
+                        "rows_count": len(result_list),
+                        "result_preview": result_list[:3] if result_list else [],
+                        "total_execution_time": round(execute_elapsed + fetch_elapsed, 4)
+                    }
+                )
+                
+                return result_list
+        except pymysql.Error as db_error:
+            # 데이터베이스 오류 상세 로깅
+            error_info = {
+                "query_key": query_key,
+                "query": query,
+                "query_length": len(query),
+                "has_params": params is not None,
+                "params": str(params) if params else None,
+                "error": str(db_error),
+                "error_type": type(db_error).__name__,
+                "error_code": db_error.args[0] if db_error.args else None,
+                "error_message": db_error.args[1] if len(db_error.args) > 1 else None,
+            }
             
-            results = cursor.fetchall()
-            
-            # DictCursor를 사용하므로 결과는 이미 딕셔너리 리스트
-            result_list = [dict(row) for row in results] if results else []
-            
-            logger.debug(
-                f"✅ 쿼리 실행 완료",
-                {"rows_count": len(result_list)}
+            logger.error(
+                f"❌ [DATABASE ERROR] 데이터베이스 오류 발생",
+                error_info,
+                exc_info=True
             )
             
-            return result_list
+            # 터미널에 직접 출력
+            print(f"\n{'='*80}")
+            print(f"❌ [DATABASE ERROR] rdb_query_hard 실행 중 오류 발생")
+            print(f"{'='*80}")
+            print(f"Query Key: {query_key}")
+            print(f"Query: {query}")
+            if params:
+                print(f"Params: {params}")
+            print(f"Error Type: {type(db_error).__name__}")
+            print(f"Error Code: {db_error.args[0] if db_error.args else 'N/A'}")
+            print(f"Error Message: {db_error.args[1] if len(db_error.args) > 1 else str(db_error)}")
+            import traceback
+            print(f"\nFull Traceback:")
+            print(traceback.format_exc())
+            print(f"{'='*80}\n")
+            
+            raise ToolError("rdb_query_hard", f"데이터베이스 오류: {str(db_error)}", db_error)
     except (ValueError, KeyError) as e:
         # Placeholder 관련 오류는 ToolError로 변환 (데코레이터가 처리)
-        raise
-    except pymysql.Error as e:
-        # 데이터베이스 오류
         logger.error(
-            f"❌ 데이터베이스 오류",
-            {"query_key": query_key, "error": str(e)},
+            f"❌ [PLACEHOLDER ERROR] Placeholder 오류",
+            {
+                "query_key": query_key,
+                "query": query,
+                "error": str(e),
+                "error_type": type(e).__name__
+            },
             exc_info=True
         )
-        raise ToolError("rdb_query_hard", f"데이터베이스 오류: {str(e)}", e)
+        raise
+    except Exception as e:
+        # 기타 예상치 못한 오류
+        logger.error(
+            f"❌ [UNEXPECTED ERROR] 예상치 못한 오류",
+            {
+                "query_key": query_key,
+                "query": query,
+                "error": str(e),
+                "error_type": type(e).__name__
+            },
+            exc_info=True
+        )
+        
+        # 터미널에 직접 출력
+        print(f"\n{'='*80}")
+        print(f"❌ [UNEXPECTED ERROR] rdb_query_hard 실행 중 예상치 못한 오류")
+        print(f"{'='*80}")
+        print(f"Query Key: {query_key}")
+        print(f"Query: {query}")
+        print(f"Error Type: {type(e).__name__}")
+        print(f"Error Message: {str(e)}")
+        import traceback
+        print(f"\nFull Traceback:")
+        print(traceback.format_exc())
+        print(f"{'='*80}\n")
+        
+        raise
 
 
 @tool(args_schema=RDBQueryLLMInput)
@@ -313,11 +497,36 @@ async def rdb_query_llm(
 ## 데이터베이스 메타데이터
 {metadata_str}
 
+## 중요: 컬럼명 주의사항
+**eiExchangeRate 테이블의 컬럼명은 한글을 사용합니다:**
+- `date`: 날짜 (DATE)
+- `usdkrw`: USD/KRW 환율 (DOUBLE)
+- `미국수출금액`: 미국 수출 금액 (DOUBLE)
+- `미국수입금액`: 미국 수입 금액 (DOUBLE)
+- `외환보유액`: 외환 보유액 (DOUBLE)
+- `미국외환보유액`: 미국 외환 보유액 (DOUBLE)
+- `한국은행기준금리`: 한국은행 기준금리 (DOUBLE)
+- `정부대출금금리`: 정부 대출금 금리 (DOUBLE)
+- `시장금리`: 시장 금리 (DOUBLE)
+- `소비자물가지수`: 소비자 물가지수 (DOUBLE)
+- `수출물가지수`: 수출 물가지수 (DOUBLE)
+- `수입물가지수`: 수입 물가지수 (DOUBLE)
+- `경제성장률`: 경제 성장률 (DOUBLE)
+- `미국경제성장률`: 미국 경제 성장률 (DOUBLE)
+- `gdp`: GDP (DOUBLE)
+- `us_gdp`: 미국 GDP (DOUBLE)
+- `주가지수`: 주가지수 (DOUBLE)
+- `미국주가지수`: 미국 주가지수 (DOUBLE)
+- `한국금리`: 한국 금리 (DOUBLE)
+- `미국금리`: 미국 금리 (DOUBLE)
+
+**절대 영어 컬럼명(base, us_interest, reserve 등)을 사용하지 마세요. 반드시 한글 컬럼명을 사용하세요.**
+
 ## 쿼리 작성 규칙
 1. **보안**: SQL Injection을 방지하기 위해 파라미터화된 쿼리를 사용하지 않고, 직접 값을 넣되 문자열은 작은따옴표로 감싸세요.
 2. **날짜 형식**: 날짜는 반드시 'YYYY-MM-DD' 형식을 사용하세요.
 3. **테이블명**: 대소문자를 구분하므로 정확한 테이블명을 사용하세요 (eiExchangeRate).
-4. **컬럼명**: 정확한 컬럼명을 사용하세요.
+4. **컬럼명**: **반드시 한글 컬럼명을 정확히 사용하세요.** 영어 컬럼명은 사용하지 마세요.
 5. **LIMIT**: 대량의 데이터 조회 시 반드시 LIMIT을 사용하세요.
 6. **SELECT**: 필요한 컬럼만 선택하세요.
 
@@ -366,8 +575,27 @@ SQL 쿼리만 반환하되, JSON 형식으로 감싸서 반환하세요."""
             {"sql_query": sql_query, "explanation": explanation}
         )
         
+        # Tool 호출 및 쿼리 로깅
+        logger.info(
+            f"🔧 [TOOL CALL] rdb_query_llm 실행",
+            {
+                "tool_name": "rdb_query_llm",
+                "user_request": user_request,
+                "has_context": context is not None,
+                "generated_query": sql_query,
+                "explanation": explanation
+            }
+        )
+        
+        logger.info(
+            f"📝 [QUERY] LLM 생성 쿼리 실행",
+            {
+                "query": sql_query,
+                "user_request": user_request
+            }
+        )
+        
         # 쿼리 실행
-        logger.debug("🚀 쿼리 실행 중...")
         conn = _db_connection._get_connection()
         with conn.cursor() as cursor:
             cursor.execute(sql_query)
@@ -375,8 +603,13 @@ SQL 쿼리만 반환하되, JSON 형식으로 감싸서 반환하세요."""
             result_list = [dict(row) for row in results] if results else []
         
         logger.info(
-            f"✅ 쿼리 실행 완료",
-            {"results_count": len(result_list)}
+            f"✅ [TOOL RESULT] rdb_query_llm 완료",
+            {
+                "tool_name": "rdb_query_llm",
+                "query": sql_query,
+                "results_count": len(result_list),
+                "result_preview": result_list[:3] if result_list else []
+            }
         )
         
         return {
@@ -440,9 +673,23 @@ async def rdb_modify(
     Returns:
         실행 결과 딕셔너리
     """
+    # Tool 호출 및 쿼리 로깅
     logger.info(
-        f"🔧 데이터 수정 쿼리 실행 시작",
-        {"query_preview": query[:100], "has_params": params is not None}
+        f"🔧 [TOOL CALL] rdb_modify 실행",
+        {
+            "tool_name": "rdb_modify",
+            "query_preview": query[:100],
+            "has_params": params is not None,
+            "params": str(params) if params else None
+        }
+    )
+    
+    logger.info(
+        f"📝 [QUERY] RDB 수정 쿼리 실행",
+        {
+            "query": query,
+            "params": str(params) if params else None
+        }
     )
     
     # 쿼리 타입 확인 (SELECT는 허용하지 않음)
@@ -465,8 +712,13 @@ async def rdb_modify(
             conn.commit()
             
             logger.info(
-                f"✅ 데이터 수정 완료",
-                {"affected_rows": affected_rows, "query_type": query_upper.split()[0]}
+                f"✅ [TOOL RESULT] rdb_modify 완료",
+                {
+                    "tool_name": "rdb_modify",
+                    "query": query,
+                    "affected_rows": affected_rows,
+                    "query_type": query_upper.split()[0]
+                }
             )
             
             return {
@@ -496,88 +748,309 @@ async def rdb_modify(
         raise ToolError("rdb_modify", f"데이터베이스 오류: {str(e)}", e)
 
 
-@tool(args_schema=RDBModifyByKeyInput)
-@handle_tool_error("rdb_modify_by_key")
-async def rdb_modify_by_key(
-    query_key: str,
-    params: Optional[Tuple[Any, ...]] = None
+# ---------------------------------------------------------------------------
+# ECOS 최신 날짜 조회
+# ---------------------------------------------------------------------------
+
+@tool(args_schema=RDBGetLatestEcosDateInput)
+@handle_tool_error("rdb_get_latest_ecos_date")
+async def rdb_get_latest_ecos_date(
+    table_name: str = "eiExchangeRate",
+    date_column: str = "date",
 ) -> Dict[str, Any]:
     """
-    쿼리 키를 사용하여 수정 쿼리 실행
+    주어진 테이블에서 가장 최신 날짜를 조회한다.
+    
+    ECOS ETL이 어디까지 적재되어 있는지 확인하거나,
+    데이터 업데이트 시 시작 날짜를 결정할 때 사용한다.
     
     Args:
-        query_key: 실행할 쿼리의 키
-        params: 쿼리 파라미터 (튜플)
+        table_name: 조회할 테이블명 (기본값: "eiExchangeRate")
+        date_column: 날짜 컬럼명 (기본값: "date")
         
     Returns:
-        실행 결과 딕셔너리
+        최신 날짜 정보 딕셔너리
     """
-    if query_key not in rdb_modify_queries:
-        available = ", ".join(rdb_modify_queries.keys())
-        raise ToolError(
-            "rdb_modify_by_key",
-            f"쿼리 키 '{query_key}'를 찾을 수 없습니다. 사용 가능한 쿼리: {available}"
+    start_time = time.time()
+    
+    logger.info(
+        f"🔧 [TOOL CALL] rdb_get_latest_ecos_date 실행",
+        {
+            "tool_name": "rdb_get_latest_ecos_date",
+            "table_name": table_name,
+            "date_column": date_column
+        }
+    )
+    
+    conn = _db_connection._get_connection()
+    
+    try:
+        with conn.cursor() as cursor:
+            sql = f"SELECT MAX(`{date_column}`) AS max_date FROM `{table_name}`"
+            logger.info(
+                f"📝 [QUERY] 최신 날짜 조회",
+                {"table": table_name, "date_column": date_column, "sql": sql},
+            )
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            max_date = row["max_date"] if row and row.get("max_date") is not None else None
+            
+            # date 객체를 문자열로 변환
+            if max_date and hasattr(max_date, 'strftime'):
+                max_date_str = max_date.strftime("%Y-%m-%d")
+            else:
+                max_date_str = str(max_date) if max_date else None
+
+            elapsed = time.time() - start_time
+            
+            logger.info(
+                f"✅ [TOOL RESULT] rdb_get_latest_ecos_date 완료",
+                {
+                    "tool_name": "rdb_get_latest_ecos_date",
+                    "table": table_name,
+                    "date_column": date_column,
+                    "max_date": max_date_str,
+                    "elapsed_seconds": round(elapsed, 4),
+                },
+            )
+            
+            return {
+                "table": table_name,
+                "date_column": date_column,
+                "max_date": max_date,
+                "max_date_str": max_date_str,
+                "elapsed": elapsed,
+                "status": "success"
+            }
+    except Exception as e:
+        logger.error(
+            f"❌ rdb_get_latest_ecos_date 실패",
+            {"table": table_name, "date_column": date_column, "error": str(e)},
+            exc_info=True,
         )
-    
-    query = rdb_modify_queries[query_key]
-    return await rdb_modify(query, params)
+        raise ToolError("rdb_get_latest_ecos_date", f"최신 날짜 조회 실패: {str(e)}", e)
 
 
-# 편의 함수들 (하위 호환성 유지)
-async def get_by_date(
-    date: Optional[str] = None,
-    state: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# 사용자 정보 조회/수정 전용 툴
+# ---------------------------------------------------------------------------
+
+
+@tool(args_schema=UserInfoGetInput)
+@handle_tool_error("user_info_get")
+async def user_info_get(user_id: str) -> Dict[str, Any]:
     """
-    특정 일자의 경제 지표 조회 (편의 함수)
-    
+    user_info 테이블에서 특정 사용자의 정보를 조회한다.
+
     Args:
-        date: 날짜 (YYYY-MM-DD 형식) - None이면 state에서 가져옴
-        state: AgentState 딕셔너리 (date가 None일 때 사용)
-        
+        user_id: 조회할 사용자 ID
+
     Returns:
-        경제 지표 정보 리스트
+        {
+          "status": "success",
+          "found": bool,
+          "user_info": {...}  # 찾은 경우에만
+        }
     """
-    if date:
-        return await rdb_query_hard("get_by_date", (date,), state)
-    else:
-        return await rdb_query_hard("get_by_date", None, state)
+    logger.info(
+        "🔧 [TOOL CALL] user_info_get 실행",
+        {"tool_name": "user_info_get", "user_id": user_id},
+    )
+
+    conn = _db_connection._get_connection()
+
+    try:
+        with conn.cursor() as cursor:
+            sql = """
+                SELECT 
+                    user_id,
+                    name,
+                    age,
+                    gender,
+                    total_assets,
+                    overseas_assets,
+                    risk_profile
+                FROM user_info
+                WHERE user_id = %s
+                LIMIT 1
+            """
+            logger.info(
+                "📝 [QUERY] 사용자 정보 조회",
+                {"sql": sql.strip(), "user_id": user_id},
+            )
+            cursor.execute(sql, (user_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                logger.info(
+                    "ℹ️ [TOOL RESULT] user_info_get - 사용자 정보 없음",
+                    {"user_id": user_id},
+                )
+                return {
+                    "status": "success",
+                    "found": False,
+                    "user_info": None,
+                    "message": f"사용자 ID '{user_id}'에 대한 정보를 찾을 수 없습니다.",
+                }
+
+            user_info = dict(row)
+            logger.info(
+                "✅ [TOOL RESULT] user_info_get 완료",
+                {"user_id": user_id, "user_info_preview": user_info},
+            )
+            return {
+                "status": "success",
+                "found": True,
+                "user_info": user_info,
+            }
+    except Exception as e:
+        logger.error(
+            "❌ user_info_get 실패",
+            {"user_id": user_id, "error": str(e)},
+            exc_info=True,
+        )
+        raise ToolError("user_info_get", f"사용자 정보 조회 실패: {str(e)}", e)
 
 
-async def get_by_range(
-    start_date: str,
-    end_date: str,
-    limit: int = 100,
-    state: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
+@tool(args_schema=UserInfoUpsertInput)
+@handle_tool_error("user_info_upsert")
+async def user_info_upsert(
+    user_id: str,
+    name: str,
+    age: int,
+    gender: str,
+    total_assets: float,
+    overseas_assets: float,
+    risk_profile: str,
+) -> Dict[str, Any]:
     """
-    날짜 범위의 경제 지표 조회 (편의 함수)
-    
+    user_info 테이블에 사용자 정보를 입력/수정(Upsert)한다.
+
+    - user_id가 없으면 INSERT
+    - user_id가 이미 있으면 UPDATE
+
     Args:
-        start_date: 시작 날짜 (YYYY-MM-DD 형식)
-        end_date: 종료 날짜 (YYYY-MM-DD 형식)
-        limit: 최대 조회 개수
-        state: AgentState 딕셔너리
-        
+        user_id: 사용자 ID (PK)
+        name: 사용자 이름
+        age: 나이
+        gender: 성별
+        total_assets: 총 재산 (KRW 기준)
+        overseas_assets: 해외 재산 (KRW 기준)
+        risk_profile: 투자 성향
+
     Returns:
-        경제 지표 정보 리스트
+        {
+          "status": "success",
+          "affected_rows": int,
+          "operation": "insert" | "update",
+          "user_info": {...}  # 최종 저장된 값
+        }
     """
-    return await rdb_query_hard("get_by_range", (start_date, end_date, limit), state)
+    logger.info(
+        "🔧 [TOOL CALL] user_info_upsert 실행",
+        {
+            "tool_name": "user_info_upsert",
+            "user_id": user_id,
+            "name": name,
+            "age": age,
+            "gender": gender,
+            "total_assets": total_assets,
+            "overseas_assets": overseas_assets,
+            "risk_profile": risk_profile,
+        },
+    )
 
+    conn = _db_connection._get_connection()
 
-async def get_latest(
-    limit: int = 10,
-    state: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
-    """
-    최신 경제 지표 조회 (편의 함수)
-    
-    Args:
-        limit: 조회할 최신 데이터 개수
-        state: AgentState 딕셔너리
-        
-    Returns:
-        경제 지표 정보 리스트
-    """
-    return await rdb_query_hard("get_latest", (limit,), state)
+    try:
+        with conn.cursor() as cursor:
+            # 현재 존재 여부 확인
+            check_sql = "SELECT COUNT(*) AS cnt FROM user_info WHERE user_id = %s"
+            cursor.execute(check_sql, (user_id,))
+            row = cursor.fetchone()
+            exists = bool(row and row.get("cnt", 0) > 0)
 
+            # Upsert 쿼리 (INSERT ... ON DUPLICATE KEY UPDATE)
+            sql = """
+                INSERT INTO user_info (
+                    user_id, name, age, gender, total_assets, overseas_assets, risk_profile
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    age = VALUES(age),
+                    gender = VALUES(gender),
+                    total_assets = VALUES(total_assets),
+                    overseas_assets = VALUES(overseas_assets),
+                    risk_profile = VALUES(risk_profile)
+            """
+
+            params = (
+                user_id,
+                name,
+                age,
+                gender,
+                total_assets,
+                overseas_assets,
+                risk_profile,
+            )
+
+            logger.info(
+                "📝 [QUERY] 사용자 정보 Upsert 실행",
+                {"sql": sql.strip(), "params": params},
+            )
+            affected_rows = cursor.execute(sql, params)
+            conn.commit()
+
+            operation = "update" if exists else "insert"
+
+            # 최종 저장된 레코드 다시 조회
+            cursor.execute(
+                """
+                SELECT 
+                    user_id,
+                    name,
+                    age,
+                    gender,
+                    total_assets,
+                    overseas_assets,
+                    risk_profile
+                FROM user_info
+                WHERE user_id = %s
+                LIMIT 1
+                """,
+                (user_id,),
+            )
+            saved_row = cursor.fetchone()
+            saved_info = dict(saved_row) if saved_row else None
+
+            logger.info(
+                "✅ [TOOL RESULT] user_info_upsert 완료",
+                {
+                    "user_id": user_id,
+                    "operation": operation,
+                    "affected_rows": affected_rows,
+                    "saved_info_preview": saved_info,
+                },
+            )
+
+            return {
+                "status": "success",
+                "operation": operation,
+                "affected_rows": affected_rows,
+                "user_info": saved_info,
+            }
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
+        logger.error(
+            "❌ user_info_upsert 실패",
+            {
+                "user_id": user_id,
+                "error": str(e),
+            },
+            exc_info=True,
+        )
+        raise ToolError("user_info_upsert", f"사용자 정보 Upsert 실패: {str(e)}", e)

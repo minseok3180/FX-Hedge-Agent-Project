@@ -14,22 +14,24 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
-            us_ex, 
-            us_im, 
-            reserve, 
-            us_reserve, 
-            us_export, 
-            us_import,
-            base, 
-            market, 
-            consumer, 
-            exp_rate, 
-            im_rate, 
-            us_current, 
-            us_growth, 
+            미국수출금액, 
+            미국수입금액, 
+            외환보유액, 
+            미국외환보유액, 
+            한국은행기준금리, 
+            정부대출금금리, 
+            시장금리, 
+            소비자물가지수, 
+            수출물가지수, 
+            수입물가지수, 
+            경제성장률, 
+            미국경제성장률, 
+            gdp, 
             us_gdp, 
-            us_stock, 
-            us_interest
+            주가지수, 
+            미국주가지수, 
+            한국금리, 
+            미국금리
         FROM eiExchangeRate
         WHERE date = '{date}'
         ORDER BY date DESC
@@ -40,22 +42,24 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
-            us_ex, 
-            us_im, 
-            reserve, 
-            us_reserve, 
-            us_export, 
-            us_import,
-            base, 
-            market, 
-            consumer, 
-            exp_rate, 
-            im_rate, 
-            us_current, 
-            us_growth, 
+            미국수출금액, 
+            미국수입금액, 
+            외환보유액, 
+            미국외환보유액, 
+            한국은행기준금리, 
+            정부대출금금리, 
+            시장금리, 
+            소비자물가지수, 
+            수출물가지수, 
+            수입물가지수, 
+            경제성장률, 
+            미국경제성장률, 
+            gdp, 
             us_gdp, 
-            us_stock, 
-            us_interest
+            주가지수, 
+            미국주가지수, 
+            한국금리, 
+            미국금리
         FROM eiExchangeRate
         WHERE date BETWEEN %s AND %s
         ORDER BY date DESC
@@ -66,22 +70,24 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
-            us_ex, 
-            us_im, 
-            reserve, 
-            us_reserve, 
-            us_export, 
-            us_import,
-            base, 
-            market, 
-            consumer, 
-            exp_rate, 
-            im_rate, 
-            us_current, 
-            us_growth, 
+            미국수출금액, 
+            미국수입금액, 
+            외환보유액, 
+            미국외환보유액, 
+            한국은행기준금리, 
+            정부대출금금리, 
+            시장금리, 
+            소비자물가지수, 
+            수출물가지수, 
+            수입물가지수, 
+            경제성장률, 
+            미국경제성장률, 
+            gdp, 
             us_gdp, 
-            us_stock, 
-            us_interest
+            주가지수, 
+            미국주가지수, 
+            한국금리, 
+            미국금리
         FROM eiExchangeRate
         ORDER BY date DESC
         LIMIT %s
@@ -94,13 +100,16 @@ rdb_hard_queries = {
         LIMIT 1
     """,
     
-    # User Info 쿼리
+    # User Info 쿼리 (새 사용자 프로필 스키마 기준)
     "get_user_info_by_id": """
         SELECT 
             user_id,
-            user_name,
-            user_krw,
-            user_usd
+            name,
+            age,
+            gender,
+            total_assets,
+            overseas_assets,
+            risk_profile
         FROM user_info
         WHERE user_id = '{user_id}'
         LIMIT 1
@@ -109,9 +118,12 @@ rdb_hard_queries = {
     "get_all_users": """
         SELECT 
             user_id,
-            user_name,
-            user_krw,
-            user_usd
+            name,
+            age,
+            gender,
+            total_assets,
+            overseas_assets,
+            risk_profile
         FROM user_info
     """,
 }

@@ -5,11 +5,15 @@ from typing import Dict, Any, Optional, List, Literal, Annotated, TYPE_CHECKING
 from operator import add
 from src.utils.settings import settings
 from src.agents.market_information_agent import MarketInformationAgent
+from src.agents.expert_information_agent import ExpertInformationAgent
+from src.agents.user_information_agent import UserInformationAgent
 from src.agents.reask_agent import ReAskAgent
 from src.agents.react_agent import ReActAgent
 from src.agents.handsoff_agent import HandsOffAgent
 from src.prompts.supervisor_routing import SUPERVISOR_ROUTING_SYSTEM_PROMPT, SUPERVISOR_ROUTING_USER_PROMPT_TEMPLATE
-from src.prompts.market_information_description import MARKET_INFORMATION_DESCRIPTION
+from src.prompts.market_information_routing import MARKET_INFORMATION_ROUTING
+from src.prompts.expert_information_routing import EXPERT_INFORMATION_ROUTING
+from src.prompts.user_information_routing import USER_INFORMATION_ROUTING
 from src.utils.logger import get_logger
 from src.utils.llm import LANGCHAIN_OPENAI_AVAILABLE, convert_dict_messages_to_langchain
 from src.utils.state import AgentState, AdditionalInfo, Reference, Action
@@ -57,6 +61,7 @@ class SupervisorState(TypedDict):
     needs_clarification: bool
     clarification_question: Optional[str]
     final_answer: Optional[str]
+    handsoff_decision: Optional[Dict[str, Any]]  # Hands-off 결정
     additional_info: Optional[Dict[str, Any]]  # dict로 저장
     status: str
 
@@ -86,13 +91,19 @@ class Supervisor:
         # 하위 에이전트 초기화
         self.agents = {
             "market_information": MarketInformationAgent(),
+            "expert_information": ExpertInformationAgent(),
+            "user_information": UserInformationAgent(),
             "reask": ReAskAgent(),
             "react": ReActAgent(),
             "handsoff": HandsOffAgent()
         }
         
-        # 에이전트 설명 (라우팅에 사용)
-        self.agent_descriptions = MARKET_INFORMATION_DESCRIPTION
+        # 에이전트 설명 (라우팅에 사용) - 모든 에이전트 라우팅 설명 결합
+        self.agent_descriptions = (
+            f"{MARKET_INFORMATION_ROUTING}\n\n"
+            f"{EXPERT_INFORMATION_ROUTING}\n\n"
+            f"{USER_INFORMATION_ROUTING}"
+        )
         
         # LangGraph 그래프 구성
         if LANGGRAPH_AVAILABLE:
@@ -159,7 +170,7 @@ class Supervisor:
         else:
             return graph.compile()
     
-    async def _reask_node(self, state: SupervisorState) -> CommandType[Literal["clarify", "continue"]]:
+    async def _reask_node(self, state: SupervisorState) -> Dict[str, Any]:
         """ReAsk 노드: 정보 충분성 확인"""
         self.logger.debug("🔍 ReAsk 노드 실행")
         
@@ -174,23 +185,17 @@ class Supervisor:
         )
         
         if reask_result.get("needs_clarification", False):
-            # 재질문 필요
-            return Command(
-                goto="clarify",
-                update={
-                    "needs_clarification": True,
-                    "clarification_question": reask_result.get("clarification_question", ""),
-                    "status": "needs_clarification"
-                }
-            )
+            # 재질문 필요 - conditional edge가 "clarify": END로 처리
+            return {
+                "needs_clarification": True,
+                "clarification_question": reask_result.get("clarification_question", ""),
+                "status": "needs_clarification"
+            }
         else:
-            # 계속 진행
-            return Command(
-                goto="continue",
-                update={
-                    "needs_clarification": False
-                }
-            )
+            # 계속 진행 - conditional edge가 "continue": "routing"로 처리
+            return {
+                "needs_clarification": False
+            }
     
     async def _routing_node(self, state: SupervisorState) -> Dict[str, Any]:
         """라우팅 노드: 적절한 에이전트 선택"""
@@ -199,13 +204,32 @@ class Supervisor:
         user_query = state["user_query"]
         conversation_history = state["conversation_history"]
         
+        self.logger.info(
+            f"🔄 [ROUTING] 에이전트 라우팅 시작",
+            {
+                "user_query": user_query,
+                "conversation_history_length": len(conversation_history)
+            }
+        )
+        
         routing_decision = await self._select_agent(user_query, conversation_history)
+        
+        routing = routing_decision.get("routing", [])
+        self.logger.info(
+            f"✅ [ROUTING] 라우팅 결정 완료",
+            {
+                "routing_decision": routing_decision,
+                "selected_agents": routing,
+                "agents_count": len(routing),
+                "task_breakdown": routing_decision.get("task_breakdown", {})
+            }
+        )
         
         return {
             "routing_decision": routing_decision
         }
     
-    async def _agent_execution_node(self, state: SupervisorState) -> CommandType[Literal["handsoff", "continue"]]:
+    async def _agent_execution_node(self, state: SupervisorState) -> Dict[str, Any]:
         """에이전트 실행 노드"""
         self.logger.debug("🚀 에이전트 실행 노드")
         
@@ -218,10 +242,11 @@ class Supervisor:
         date = state["date"]
         
         if not routing or not isinstance(routing, list):
-            return Command(
-                goto="continue",
-                update={"status": "error", "final_answer": "라우팅 정보가 없습니다."}
-            )
+            # 에러 발생 시 final_answer를 설정하여 conditional edge가 "continue" -> "final_answer"로 라우팅
+            return {
+                "status": "error",
+                "final_answer": "라우팅 정보가 없습니다."
+            }
         
         # Sequential 실행
         agent_results = []
@@ -236,6 +261,17 @@ class Supervisor:
             
             task = routing_decision.get("task_breakdown", {}).get(agent_name, user_query)
             
+            self.logger.info(
+                f"🚀 [AGENT EXECUTION] 에이전트 실행 시작",
+                {
+                    "agent_name": agent_name,
+                    "task": task,
+                    "user_query": user_query,
+                    "user_id": user_id,
+                    "date": date
+                }
+            )
+            
             context = {
                 "state": agent_state.to_dict(),
                 "collected_data": updated_collected_data,
@@ -245,6 +281,17 @@ class Supervisor:
             
             result = await self.agents[agent_name].execute(task, context)
             agent_results.append(result)
+            
+            self.logger.info(
+                f"✅ [AGENT EXECUTION] 에이전트 실행 완료",
+                {
+                    "agent_name": agent_name,
+                    "status": result.get("status", "unknown"),
+                    "has_answer": "answer" in result or "message" in result,
+                    "has_reference": "reference" in result,
+                    "has_action": "action" in result
+                }
+            )
             
             # Reference와 Action 추출 (dict 형태로 변환)
             if "reference" in result:
@@ -274,31 +321,25 @@ class Supervisor:
                 )
                 
                 if handsoff_result.get("decision") == "forward":
-                    # 직접 답변 - Command로 상태 업데이트 및 라우팅
-                    return Command(
-                        goto="continue",
-                        update={
-                            "collected_data": updated_collected_data,
-                            "references": new_references,  # reducer가 자동으로 append
-                            "actions": new_actions,  # reducer가 자동으로 append
-                            "agent_results": agent_results,
-                            "current_agent": agent_name,
-                            "final_answer": handsoff_result.get("answer", ""),
-                            "status": "success"
-                        }
-                    )
+                    # 직접 답변 - final_answer를 설정하여 conditional edge가 "continue" -> "final_answer"로 라우팅
+                    return {
+                        "collected_data": updated_collected_data,
+                        "references": new_references,  # reducer가 자동으로 append
+                        "actions": new_actions,  # reducer가 자동으로 append
+                        "agent_results": agent_results,
+                        "current_agent": agent_name,
+                        "final_answer": handsoff_result.get("answer", ""),
+                        "status": "success"
+                    }
         
         # 계속 진행 (Supervisor가 최종 답변 생성)
-        # Command로 상태 업데이트 및 라우팅
-        return Command(
-            goto="handsoff",
-            update={
-                "collected_data": updated_collected_data,
-                "references": new_references,  # reducer가 자동으로 append
-                "actions": new_actions,  # reducer가 자동으로 append
-                "agent_results": agent_results
-            }
-        )
+        # final_answer가 없으므로 conditional edge가 "handsoff" -> "handsoff" 노드로 라우팅
+        return {
+            "collected_data": updated_collected_data,
+            "references": new_references,  # reducer가 자동으로 append
+            "actions": new_actions,  # reducer가 자동으로 append
+            "agent_results": agent_results
+        }
     
     async def _handsoff_node(self, state: SupervisorState) -> Dict[str, Any]:
         """Hands-off 노드: 최종 답변 생성 여부 결정"""
@@ -432,12 +473,17 @@ class Supervisor:
                     "needs_clarification": False,
                     "clarification_question": None,
                     "final_answer": None,
+                    "handsoff_decision": None,
                     "additional_info": None,
                     "status": "processing"
                 }
                 
-                # 그래프 실행
-                final_state = await self.graph.ainvoke(initial_state)
+                # 그래프 실행 (Checkpointer를 사용하므로 thread_id 필요)
+                # thread_id는 사용자별로 고유하게 생성 (user_id 기반)
+                import hashlib
+                thread_id = hashlib.md5(f"{user_id}_{date}".encode()).hexdigest()
+                config = {"configurable": {"thread_id": thread_id}}
+                final_state = await self.graph.ainvoke(initial_state, config=config)
                 
                 # 결과 추출
                 if final_state.get("needs_clarification"):
@@ -491,9 +537,14 @@ class Supervisor:
                     "supervisor_decision": final_state.get("routing_decision")
                 }
             except Exception as e:
+                import traceback
                 self.logger.error(
-                    f"❌ LangGraph 실행 실패",
-                    {"error": str(e)},
+                    f"❌ LangGraph 실행 실패: {str(e)}",
+                    {
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "traceback": traceback.format_exc()
+                    },
                     exc_info=True
                 )
                 # Fallback to legacy mode
@@ -640,7 +691,7 @@ class Supervisor:
                     response = self.client.invoke(langchain_messages)
                     content = response.content if hasattr(response, 'content') else str(response)
             except Exception as e:
-                logger.warning(
+                self.logger.warning(
                     f"⚠️  구조화된 출력 실패, 일반 호출 사용",
                     {"error": str(e)}
                 )
