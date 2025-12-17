@@ -146,7 +146,7 @@ async def call_gpt(
     **kwargs
 ) -> str:
     """
-    GPT API에 요청을 보내 답변을 받는 함수 (LangChain Runnable 및 LangSmith 추적 사용)
+    GPT API에 요청을 보내 답변을 받는 함수
     
     Args:
         messages: 대화 메시지 리스트 (예: [{"role": "user", "content": "안녕하세요"}])
@@ -164,21 +164,20 @@ async def call_gpt(
     if model is None:
         model = settings.openai_model
     
-    logger.info(
-        f"📤 [LLM CALL] GPT API 호출 시작",
+    logger.debug(
+        f"📤 GPT API 호출 시작",
         {
             "model": model,
             "messages_count": len(messages),
             "temperature": temperature,
-            "has_response_format": response_format is not None,
-            "message_preview": messages[-1].get("content", "")[:100] if messages else None
+            "has_response_format": response_format is not None
         }
     )
     
     try:
         client = _get_client()
         
-        # LangChain OpenAI 사용 시 (LangSmith 자동 추적)
+        # LangChain OpenAI 사용 시
         if LANGCHAIN_OPENAI_AVAILABLE and hasattr(client, 'invoke'):
             # LangChain 내장 함수로 메시지 변환
             langchain_messages = convert_dict_messages_to_langchain(messages)
@@ -188,22 +187,9 @@ async def call_gpt(
                 client.model_name = model
             client.temperature = temperature
             
-            # LangChain Runnable 사용 (LangSmith 자동 추적)
-            try:
-                from langchain_core.runnables import RunnableLambda
-                from langsmith import traceable
-                
-                # LangSmith traceable로 래핑
-                @traceable(name="llm_call", run_type="llm")
-                async def _llm_invoke():
-                    response = await client.ainvoke(langchain_messages)
-                    return response.content if hasattr(response, 'content') else str(response)
-                
-                content = await _llm_invoke()
-            except (ImportError, AttributeError):
-                # Fallback: 일반 invoke 사용
-                response = client.invoke(langchain_messages)
-                content = response.content if hasattr(response, 'content') else str(response)
+            # LangChain 호출 (LangSmith 자동 추적)
+            response = client.invoke(langchain_messages)
+            content = response.content if hasattr(response, 'content') else str(response)
         else:
             # OpenAI SDK 직접 사용
             api_params = {
@@ -219,12 +205,11 @@ async def call_gpt(
             response = client.chat.completions.create(**api_params)
             content = response.choices[0].message.content
         
-        logger.info(
-            f"📥 [LLM RESULT] GPT API 응답 수신",
+        logger.debug(
+            f"📥 GPT API 응답 수신",
             {
                 "model": model,
-                "response_length": len(content) if content else 0,
-                "response_preview": content[:200] if content else None
+                "response_length": len(content) if content else 0
             }
         )
         
@@ -232,11 +217,10 @@ async def call_gpt(
         
     except Exception as e:
         logger.error(
-            f"❌ [LLM ERROR] GPT API 호출 실패",
+            f"❌ GPT API 호출 실패",
             {
                 "model": model,
-                "error": str(e),
-                "error_type": type(e).__name__
+                "error": str(e)
             },
             exc_info=True
         )

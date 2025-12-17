@@ -13,9 +13,6 @@ from src.utils.tools import (
     VDBUpsertPointsInput
 )
 
-
-
-
 logger = get_logger("vdb-tool")
 
 # 전역 Qdrant 클라이언트 인스턴스
@@ -126,25 +123,9 @@ async def vdb_search(
     Returns:
         검색 결과 리스트 (id, score, payload 포함)
     """
-    # Tool 호출 및 검색 쿼리 로깅
-    logger.info(
-        f"🔧 [TOOL CALL] vdb_search 실행",
-        {
-            "tool_name": "vdb_search",
-            "collection_name": collection_name,
-            "vector_size": len(query_vector),
-            "limit": limit
-        }
-    )
-    
-    logger.info(
-        f"📝 [QUERY] VDB 벡터 검색 실행",
-        {
-            "collection": collection_name,
-            "query_vector_preview": query_vector[:5] if len(query_vector) > 5 else query_vector,
-            "vector_size": len(query_vector),
-            "limit": limit
-        }
+    logger.debug(
+        f"🔍 벡터 검색 시작",
+        {"collection": collection_name, "vector_size": len(query_vector), "limit": limit}
     )
     
     try:
@@ -172,15 +153,8 @@ async def vdb_search(
         )
         
         logger.info(
-            f"✅ [TOOL RESULT] vdb_search 완료",
-            {
-                "tool_name": "vdb_search",
-                "collection": collection_name,
-                "results_count": len(results),
-                "result_preview": [
-                    {"id": r.id, "score": r.score} for r in results[:3]
-                ] if results else []
-            }
+            f"✅ 벡터 검색 완료",
+            {"collection": collection_name, "results_count": len(results)}
         )
         
         return [
@@ -351,3 +325,4 @@ async def vdb_upsert_points(
             exc_info=True
         )
         raise ToolError("vdb_upsert_points", f"포인트 업서트 실패: {str(e)}", e)
+

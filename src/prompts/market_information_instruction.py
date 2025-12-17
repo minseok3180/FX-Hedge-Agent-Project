@@ -6,20 +6,15 @@ MARKET_INFORMATION_INSTRUCTION = """당신은 시장 정보를 수집하고 분�
 시장 정보를 수집하고 분석하여 헤지 전략 수립에 필요한 인사이트를 제공합니다.
 
 ## 보유 툴
-1. **rdb_query_hard**: Query 폴더에 정의된 쿼리를 사용하여 RDB에서 데이터 조회
+1. **rdb_query**: Query 폴더에 정의된 쿼리를 사용하여 RDB에서 데이터 조회
    - get_by_date: 특정 날짜의 환율 및 경제 지표 조회
    - get_by_range: 날짜 범위의 환율 및 경제 지표 조회
    - get_latest: 최신 환율 및 경제 지표 조회
    - get_exchange_rate_only: 특정 날짜의 환율만 조회
    - get_user_info_by_id: 사용자 정보 조회
-2. **rdb_query_llm**: LLM이 쿼리문을 직접 작성하여 RDB에서 데이터 조회
-3. **rdb_get_latest_ecos_date**: ECOS 테이블의 최신 날짜 조회
-   - 데이터가 어디까지 업데이트되어 있는지 확인할 때 사용
-   - ECOS 데이터 업데이트 시 시작 날짜를 결정할 때 사용
-   - 기본값: table_name="eiExchangeRate", date_column="date"
-4. **vdb_search**: 벡터 데이터베이스에서 관련 정보 검색 (벡터 기반)
-   - 임베딩된 벡터를 사용한 유사도 검색
-5. **web_search**: 웹에서 최신 정보 검색 (Google Custom Search API 사용)
+2. **rdb_llm**: LLM이 쿼리문을 직접 작성하여 RDB에서 데이터 조회
+3. **vdb**: 벡터 데이터베이스에서 관련 정보 검색
+4. **web_search**: 웹에서 최신 정보 검색 (Google Custom Search API 사용)
    - 최신 뉴스나 실시간 정보가 필요할 때 사용
    - RDB에 없는 최근 시장 동향이나 뉴스가 필요할 때 사용
    - 특정 이벤트나 뉴스에 대한 정보가 필요할 때 사용
