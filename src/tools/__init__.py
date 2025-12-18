@@ -39,11 +39,11 @@ from .vdb import (
     vdb_upsert_points,
     _get_qdrant_client,  # ingest_docs.py 등에서 재사용
 )
-from .ecos import (
+from src.scripts.ecos import (
     run_ecos_pipeline,
     upload_ecos_to_db,
 )
-from .ingest_docs import ingest_documents
+# from .ingest_docs import ingest_documents
 
 # ============================================================================
 # 유틸리티 및 스키마
