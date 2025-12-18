@@ -333,7 +333,94 @@ class CalculatorTool:
             raise ImportError("pymysql이 설치되지 않았습니다. pip install pymysql")
         except Exception as e:
             raise RuntimeError(f"RDB에서 데이터를 가져오는 중 오류 발생: {str(e)}")
-    
+
+    def compute_sigmas_and_rho_from_rdb(
+        self,
+        days: int = 252,
+        asset_col: str = "SPY_close",
+    ) -> Tuple[float, float, float]:
+        """
+        RDB에서 자산(SPY 등)과 환율 데이터를 함께 가져와
+        σ_Asset, σ_FX, ρ를 한 번에 계산하는 메서드.
+        
+        Args:
+            days: 조회할 최근 일수 (기본값: 252일, 약 1년)
+            asset_col: 자산 가격 컬럼명 (예: 'SPY_close')
+            
+        Returns:
+            (sigma_asset, sigma_fx, rho) 튜플
+        """
+        # .env 로드
+        load_dotenv()
+        
+        try:
+            import pymysql
+            
+            db_host = os.getenv("DATABASE_HOST") or os.getenv("DB_HOST")
+            db_port = int(os.getenv("DATABASE_PORT") or os.getenv("DB_PORT", 3306))
+            db_user = os.getenv("DATABASE_USER") or os.getenv("DB_USER")
+            db_password = os.getenv("DATABASE_PASSWORD") or os.getenv("DB_PASSWORD")
+            db_name = os.getenv("DATABASE_NAME") or os.getenv("DB_NAME")
+            
+            if not all([db_host, db_user, db_password, db_name]):
+                raise ValueError("데이터베이스 연결 정보가 .env에 없습니다.")
+            
+            # DB 연결
+            conn = pymysql.connect(
+                host=db_host,
+                port=db_port,
+                user=db_user,
+                password=db_password,
+                database=db_name,
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor
+            )
+            
+            # 최근 N일 자산(SPY) + 환율 데이터 조회
+            # asset_col은 코드 상에서만 지정하므로 SQL 인젝션 위험은 없음
+            query = f"""
+                SELECT date, usdkrw, {asset_col}
+                FROM eiExchangeRate
+                ORDER BY date DESC
+                LIMIT %s
+            """
+            
+            with conn.cursor() as cursor:
+                cursor.execute(query, (days,))
+                results = cursor.fetchall()
+            
+            conn.close()
+            
+            if not results:
+                raise ValueError(f"RDB에서 자산/환율 데이터를 찾을 수 없습니다. (최근 {days}일)")
+            
+            # DataFrame으로 변환 후 날짜 오름차순 정렬
+            df = pd.DataFrame(results)
+            df = df.sort_values("date").reset_index(drop=True)
+            
+            if "usdkrw" not in df.columns:
+                raise KeyError("eiExchangeRate 테이블에 'usdkrw' 컬럼이 없습니다.")
+            if asset_col not in df.columns:
+                raise KeyError(f"eiExchangeRate 테이블에 '{asset_col}' 컬럼이 없습니다.")
+            
+            # 가격 시계열 → 수익률
+            fx_prices = df["usdkrw"]
+            asset_prices = df[asset_col]
+            
+            fx_returns = self.compute_log_returns_from_prices(fx_prices)
+            asset_returns = self.compute_log_returns_from_prices(asset_prices)
+            
+            # σ_Asset, σ_FX, ρ 계산
+            sigma_asset, sigma_fx, rho = self.compute_sigma_and_rho_from_returns(
+                asset_returns, fx_returns
+            )
+            return sigma_asset, sigma_fx, rho
+        
+        except ImportError:
+            raise ImportError("pymysql이 설치되지 않았습니다. pip install pymysql")
+        except Exception as e:
+            raise RuntimeError(f"RDB에서 자산/환율 데이터를 가져오는 중 오류 발생: {str(e)}")
+        
     def compute_all(
         self,
         signal_score: float,
