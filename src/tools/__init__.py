@@ -32,18 +32,13 @@ from .web_search import web_search
 # ============================================================================
 from .rdb import (
     rdb_modify,
-    _db_connection,  # ecos.py 등에서 재사용
+    _db_connection,  # 스크립트 등에서 재사용
 )
 from .vdb import (
     vdb_create_collection,
     vdb_upsert_points,
-    _get_qdrant_client,  # ingest_docs.py 등에서 재사용
+    _get_qdrant_client,  # 스크립트 등에서 재사용
 )
-from .ecos import (
-    run_ecos_pipeline,
-    upload_ecos_to_db,
-)
-from .ingest_docs import ingest_documents
 
 # ============================================================================
 # 유틸리티 및 스키마
@@ -85,12 +80,6 @@ __all__ = [
     "vdb_create_collection",
     "vdb_upsert_points",
     "_get_qdrant_client",
-    # ECOS ETL
-    "run_ecos_pipeline",
-    "upload_ecos_to_db",
-    # 문서 인제스트
-    "ingest_documents",
-    
     # ========== 유틸리티 ==========
     "tool",
     "get_all_tools",

@@ -14,5 +14,9 @@ EXPERT_INFORMATION_ROUTING = """## 에이전트: expert_information
 - 특정 헤지 기법(선물환, 옵션 등)에 대한 상세 설명이 필요할 때
 - 과거 사례 기반의 헤지 전략 분석이 필요할 때
 - 기업의 환헤지 정책 수립에 대한 가이드라인이 필요할 때
+
+**주의 (사용하지 말아야 할 경우)**:
+- 특정 사용자의 개인 재산/자산 규모나 risk level(위험 성향)을 묻는 질문은
+  expert_information 에이전트가 아니라 **user_information 에이전트**가 담당해야 합니다.
 """
 

@@ -37,7 +37,10 @@ rdb_hard_queries = {
             주가지수, 
             미국주가지수, 
             한국금리, 
-            미국금리
+            미국금리,
+            SPY_close,
+            VIX,
+            DXY
         FROM eiExchangeRate
         WHERE date = '{date}'
         ORDER BY date DESC
@@ -68,7 +71,10 @@ rdb_hard_queries = {
             주가지수, 
             미국주가지수, 
             한국금리, 
-            미국금리
+            미국금리,
+            SPY_close,
+            VIX,
+            DXY
         FROM eiExchangeRate
         WHERE date BETWEEN %s AND %s
         ORDER BY date DESC
@@ -99,7 +105,10 @@ rdb_hard_queries = {
             주가지수, 
             미국주가지수, 
             한국금리, 
-            미국금리
+            미국금리,
+            SPY_close,
+            VIX,
+            DXY
         FROM eiExchangeRate
         ORDER BY date DESC
         LIMIT %s
@@ -116,12 +125,10 @@ rdb_hard_queries = {
     "get_user_info_by_id": """
         SELECT 
             user_id,
-            name,
-            age,
-            gender,
-            total_assets,
-            overseas_assets,
-            risk_profile
+            user_name,
+            user_krw,
+            user_usd,
+            risk_level
         FROM user_info
         WHERE user_id = '{user_id}'
         LIMIT 1
@@ -130,12 +137,10 @@ rdb_hard_queries = {
     "get_all_users": """
         SELECT 
             user_id,
-            name,
-            age,
-            gender,
-            total_assets,
-            overseas_assets,
-            risk_profile
+            user_name,
+            user_krw,
+            user_usd,
+            risk_level
         FROM user_info
     """,
 }
