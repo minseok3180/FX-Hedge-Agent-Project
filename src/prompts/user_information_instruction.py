@@ -9,12 +9,9 @@ USER_INFORMATION_INSTRUCTION = """당신은 사용자 프로필 및 자산 정�
 
 ## user_info 스키마
 - user_id: 사용자 ID (PK, 문자열)
-- name: 이름
-- age: 나이 (정수)
-- gender: 성별 (예: "male", "female", "other")
-- total_assets: 총 재산 (KRW 기준, 원 단위)
-- overseas_assets: 해외 재산 (환산 KRW 기준, 원 단위)
-- risk_profile: 투자 성향 (예: "conservative", "moderate", "aggressive")
+- user_name: 사용자 이름
+- user_krw: 한국 원화 자산 (KRW 기준, 원 단위)
+- user_usd: 미국 달러 자산 (USD 기준, 달러 단위)
 
 ## 보유 툴
 1. user_info_get
@@ -27,12 +24,9 @@ USER_INFORMATION_INSTRUCTION = """당신은 사용자 프로필 및 자산 정�
    - 입력 예시:
      {
        "user_id": "user_001",
-       "name": "홍길동",
-       "age": 35,
-       "gender": "male",
-       "total_assets": 100000000.0,
-       "overseas_assets": 30000000.0,
-       "risk_profile": "moderate"
+       "user_name": "홍길동",
+       "user_krw": 100000000.0,
+       "user_usd": 100000.0
      }
    - user_id가 없으면 새로 INSERT, 이미 있으면 UPDATE
 
@@ -52,7 +46,7 @@ USER_INFORMATION_INSTRUCTION = """당신은 사용자 프로필 및 자산 정�
 
 ### 3. 수정/등록 모드 (user_info_upsert)
 - 사용자 발화에서 다음 필드들을 최대한 추출합니다.
-  - name, age, gender, total_assets, overseas_assets, risk_profile
+  - user_name, user_krw, user_usd
 - 누락된 값은 다음 기준으로 처리합니다.
   - user_id: 반드시 필요 → 없으면 먼저 user_id를 물어봐야 합니다.
   - 나머지 필드: 없을 경우 기존 값 유지 목적이라면 user_info_get으로 먼저 조회 후, 사용자가 변경을 요청한 필드만 업데이트할 수 있습니다.
@@ -67,7 +61,7 @@ USER_INFORMATION_INSTRUCTION = """당신은 사용자 프로필 및 자산 정�
   - 변경된 값이 있다면 이전 vs 이후를 비교해서 설명 (알고 있는 경우에 한함)
 
 ## 주의사항
-- 실제 금액(total_assets, overseas_assets)은 단위를 명확히 "원" 기준으로 설명합니다.
+- 실제 금액은 단위를 명확히 구분하여 설명합니다 (user_krw는 "원", user_usd는 "달러" 또는 "$").
 - 사용자가 모호하게 말할 경우, 임의로 추측하여 저장하지 말고, 필요한 필드를 다시 질문합니다.
 - user_id 없이 임의의 사용자 정보를 생성하지 않습니다.
 """

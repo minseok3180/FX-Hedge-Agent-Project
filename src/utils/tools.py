@@ -169,31 +169,17 @@ class UserInfoUpsertInput(BaseModel):
         description="사용자 ID (PK, 중복 시 업데이트)",
         examples=["user_001"],
     )
-    name: str = Field(
+    user_name: str = Field(
         description="사용자 이름",
         examples=["홍길동"],
     )
-    age: int = Field(
-        description="사용자 나이",
-        ge=0,
-        le=150,
-        examples=[35],
-    )
-    gender: str = Field(
-        description="성별 (예: 'male', 'female', 'other')",
-        examples=["male"],
-    )
-    total_assets: float = Field(
-        description="총 재산 (KRW 기준, 원 단위)",
+    user_krw: float = Field(
+        description="한국 원화 자산 (KRW 기준, 원 단위)",
         examples=[100_000_000.0],
     )
-    overseas_assets: float = Field(
-        description="해외 재산 (환산 KRW 기준, 원 단위)",
-        examples=[30_000_000.0],
-    )
-    risk_profile: str = Field(
-        description="투자 성향 (예: 'conservative', 'moderate', 'aggressive')",
-        examples=["moderate"],
+    user_usd: float = Field(
+        description="미국 달러 자산 (USD 기준, 달러 단위)",
+        examples=[100_000.0],
     )
 
 # ============================================================================
