@@ -30,11 +30,16 @@ if __name__ == "__main__":
 
 from src.utils.agents import BaseAgent
 from src.tools.calculator import CalculatorTool
-from src.tools.rdb import user_info_get, user_info_upsert
 from src.utils.logger import get_logger
 from src.utils.llm import call_gpt
-from src.utils.hedge_db import ensure_hedge_tables, log_hedge_event, update_hedge_settings, get_hedge_settings
+from src.utils.state import Action, Reference
+# DB 저장 기능 제거: 사용자가 명시적으로 요청할 때만 업데이트하도록 변경
+# from src.utils.hedge_db import ensure_hedge_tables, log_hedge_event, update_hedge_settings, get_hedge_settings
+# from src.tools.rdb import user_info_get, user_info_upsert  # DB 업데이트용 - 사용하지 않음
 from uuid import uuid4
+
+# 주의: 이 agent는 헷지 비율을 계산만 하고 DB에 저장하지 않습니다.
+# DB 업데이트는 사용자가 명시적으로 요청할 때 별도의 agent나 엔드포인트에서 처리해야 합니다.
 
 logger = get_logger("strategy-execute-agent")
 
@@ -601,420 +606,45 @@ class StrategyExecuteAgent(BaseAgent):
                 w_UH_star=w_UH_star,
             )
 
-            # 6) 헷지 비율 확정 및 DB 적재 (A안: Recommendation + Confirmation + DB History logging)
+            # 6) 헷지 비율 계산 완료 (DB 저장 제거: 사용자가 명시적으로 요청할 때만 업데이트)
+            # 이 agent는 헷지 비율을 계산만 하고, DB 저장은 하지 않습니다.
+            # DB 업데이트는 사용자가 명시적으로 요청할 때 별도로 처리됩니다.
             confirmed_ratio = None
             update_result = None
             run_id = str(uuid4())  # 이번 실행의 고유 ID
             
-            # 테이블 생성 확인
-            try:
-                ensure_hedge_tables()
-            except Exception as e:
-                self.logger.warning(f"⚠️ 테이블 생성 확인 중 오류 (무시): {e}")
-            
-            # context와 state에서 정보 가져오기
-            state = context.get("state") if context else None
-            conversation_history = state.get("conversation_history", []) if state else []
-            
-            # 현재 사용자 메시지 확인 (이전 턴의 에이전트 답변에 헷지 비율 확정 요청이 있었는지 확인)
-            current_user_message = task  # task는 사용자의 현재 메시지
-            auto_update = context.get("auto_update", False) if context else False
-            
-            # 이전 대화에서 헷지 비율 확정 요청이 있었는지 확인
-            pending_hedge_confirmation = False
-            previous_hedge_ratio = None
-            previous_run_id = None
-            if conversation_history:
-                # 최근 에이전트 답변에서 헷지 비율 확정 요청이 있는지 확인
-                last_turn = conversation_history[-1]
-                last_answer = last_turn.get("agent_answer", "") or last_turn.get("additional_info", {}).get("answer", "")
-                if "헷지 비율 확정 요청" in last_answer or "해외자산을 업데이트하시겠습니까" in last_answer:
-                    pending_hedge_confirmation = True
-                    # 이전에 계산된 헷지 비율을 current_context에서 가져오기
-                    if state and "current_context" in state:
-                        previous_hedge_ratio = state["current_context"].get("w_H_star")
-                        previous_run_id = state["current_context"].get("run_id")
-            
-            # 디버깅을 위한 로그
             self.logger.info(
-                "🔍 헷지 비율 확정 조건 확인",
+                "✅ 헷지 비율 계산 완료 (DB 저장 없음)",
                 {
                     "user_id": user_id,
                     "w_H_star": w_H_star,
                     "run_id": run_id,
-                    "current_user_message": current_user_message[:50] if current_user_message else None,
-                    "pending_hedge_confirmation": pending_hedge_confirmation,
-                    "previous_hedge_ratio": previous_hedge_ratio,
-                    "previous_run_id": previous_run_id,
-                    "auto_update": auto_update,
                 }
             )
-            
-            if user_id and w_H_star is not None:
-                # (1) 추천 발생 시: RECOMMENDED 로그만 (이번 추천 저장)
-                if not pending_hedge_confirmation and not auto_update:
-                    # 계산 결과 JSON 준비 (computed_json)
-                    computed_json = {
-                        "signal_score": signal_score,
-                        "expected_fx_return": expected_fx_return,
-                        "sigma_asset": sigma_asset,
-                        "sigma_fx": sigma_fx,
-                        "rho": rho,
-                        "risk_aversion": risk_aversion,
-                        "alpha": alpha,
-                        "w_H_star": w_H_star,
-                        "w_UH_star": w_UH_star,
-                    }
-                    
-                    # RECOMMENDED 로그 (이번 추천 저장)
-                    log_hedge_event(
-                        user_id=user_id,
-                        event_type="RECOMMENDED",
-                        run_id=run_id,
-                        source="MODEL",
-                        ratio=w_H_star,
-                        computed_json=computed_json,
-                    )
-                    
-                    # current_context에 저장 (확정 대기 상태)
-                    if state:
-                        if "current_context" not in state:
-                            state["current_context"] = {}
-                        state["current_context"]["w_H_star"] = w_H_star
-                        state["current_context"]["run_id"] = run_id
-                        state["current_context"]["pending_hedge_confirmation"] = True
-                        state["current_context"]["recommended_ratio"] = w_H_star
-                        state["current_context"]["computed_json"] = computed_json
-                    
-                    # 확인 요청 메시지를 answer에 추가
-                    answer += f"\n\n💬 헷지 비율 확정 요청:\n계산된 최적 환헷지 비율은 {w_H_star:.1%}입니다. 이 비율로 해외자산을 업데이트하시겠습니까?\n\n응답 예시:\n- '예', '확인', '적용' → 계산된 비율({w_H_star:.1%})로 업데이트\n- '0.3', '30%' → 해당 비율로 업데이트\n- '아니오', '취소' → 업데이트하지 않음"
-                
-                # (2) 사용자 확정 시 (Confirm 버튼)
-                elif pending_hedge_confirmation and current_user_message:
-                    # 사용자 응답 분석
-                    confirmed_ratio = await self._confirm_hedge_ratio_with_user(
-                        calculated_ratio=previous_hedge_ratio or w_H_star,
-                        user_message=current_user_message,
-                    )
-                    
-                    if confirmed_ratio is not None:
-                        # A) Confirm: 트랜잭션으로 처리
-                        try:
-                            # state에서 computed_json 가져오기
-                            computed_json = None
-                            if state and "current_context" in state:
-                                computed_json = state["current_context"].get("computed_json")
-                            
-                            # 트랜잭션 시작 (같은 connection 사용)
-                            import pymysql
-                            import os
-                            from dotenv import load_dotenv
-                            
-                            load_dotenv()
-                            db_host = os.getenv("DATABASE_HOST") or os.getenv("DB_HOST")
-                            db_port = int(os.getenv("DATABASE_PORT") or os.getenv("DB_PORT", 3306))
-                            db_user = os.getenv("DATABASE_USER") or os.getenv("DB_USER")
-                            db_password = os.getenv("DATABASE_PASSWORD") or os.getenv("DB_PASSWORD")
-                            db_name = os.getenv("DATABASE_NAME") or os.getenv("DB_NAME")
-                            
-                            conn = pymysql.connect(
-                                host=db_host,
-                                port=db_port,
-                                user=db_user,
-                                password=db_password,
-                                database=db_name,
-                                charset="utf8mb4",
-                                cursorclass=pymysql.cursors.DictCursor,
-                            )
-                            
-                            try:
-                                cursor = conn.cursor()
-                                
-                                # 1) user_hedge_settings 업데이트 (덮어쓰기)
-                                cursor.execute(
-                                    """
-                                    INSERT INTO user_hedge_settings (user_id, confirmed_hedge_ratio, hedge_mode)
-                                    VALUES (%s, %s, %s)
-                                    ON DUPLICATE KEY UPDATE 
-                                        confirmed_hedge_ratio = VALUES(confirmed_hedge_ratio),
-                                        hedge_mode = VALUES(hedge_mode),
-                                        updated_at = CURRENT_TIMESTAMP
-                                    """,
-                                    (user_id, confirmed_ratio, "manual"),
-                                )
-                                
-                                # 2) user_hedge_ratio_history에 CONFIRMED 로그 INSERT
-                                import json
-                                decision_json = {
-                                    "choice": "confirm",
-                                    "final_ratio": confirmed_ratio,
-                                }
-                                
-                                cursor.execute(
-                                    """
-                                    INSERT INTO user_hedge_ratio_history 
-                                    (user_id, event_type, ratio, source, run_id, user_message, computed_json, decision_json)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                                    """,
-                                    (
-                                        user_id,
-                                        "CONFIRMED",
-                                        confirmed_ratio,
-                                        "USER",
-                                        previous_run_id or run_id,
-                                        current_user_message,
-                                        json.dumps(computed_json) if computed_json else None,
-                                        json.dumps(decision_json),
-                                    ),
-                                )
-                                
-                                # 트랜잭션 커밋
-                                conn.commit()
-                                
-                                answer += f"\n\n✅ 헷지 비율 확정 완료:\n- 확정된 헷지 비율: {confirmed_ratio:.1%}\n- 설정이 업데이트되었습니다."
-                                
-                                # current_context 정리
-                                if state and "current_context" in state:
-                                    state["current_context"].pop("pending_hedge_confirmation", None)
-                                    state["current_context"].pop("w_H_star", None)
-                                    state["current_context"].pop("run_id", None)
-                                    state["current_context"].pop("recommended_ratio", None)
-                                    state["current_context"].pop("computed_json", None)
-                                
-                                update_result = {"success": True, "confirmed_ratio": confirmed_ratio}
-                                
-                            except Exception as e:
-                                conn.rollback()
-                                raise e
-                            finally:
-                                conn.close()
-                            
-                        except Exception as e:
-                            self.logger.error(f"❌ 헷지 비율 확정 처리 중 오류: {e}", exc_info=True)
-                            log_hedge_event(
-                                user_id=user_id,
-                                event_type="ERROR",
-                                run_id=previous_run_id or run_id,
-                                source="SYSTEM",
-                                status="error",
-                                error_message=str(e),
-                            )
-                            answer += f"\n\n⚠️ 헷지 비율 확정 처리 중 오류가 발생했습니다: {str(e)}"
-                            update_result = {"success": False, "error": str(e)}
-                    else:
-                        # B) Decline/Do nothing: settings 변경 없이 DECLINED 로그만
-                        try:
-                            # state에서 recommended_ratio와 computed_json 가져오기
-                            recommended_ratio = previous_hedge_ratio or w_H_star
-                            computed_json = None
-                            if state and "current_context" in state:
-                                computed_json = state["current_context"].get("computed_json")
-                            
-                            # DECLINED 로그 INSERT (ratio는 recommended_ratio 저장 - 분석용)
-                            decision_json = {
-                                "choice": "decline",
-                            }
-                            
-                            log_hedge_event(
-                                user_id=user_id,
-                                event_type="DECLINED",
-                                run_id=previous_run_id or run_id,
-                                source="USER",
-                                ratio=recommended_ratio,  # 추천 비율 저장 (분석용)
-                                user_message=current_user_message,
-                                computed_json=computed_json,  # 추천이 뭐였는지 남김
-                                decision_json=decision_json,
-                            )
-                            
-                            answer += f"\n\nℹ️ 알겠습니다. 이번 추천은 적용하지 않았고, 현재 설정은 그대로 유지합니다."
-                            
-                            # current_context 정리
-                            if state and "current_context" in state:
-                                state["current_context"].pop("pending_hedge_confirmation", None)
-                                state["current_context"].pop("w_H_star", None)
-                                state["current_context"].pop("run_id", None)
-                                state["current_context"].pop("recommended_ratio", None)
-                                state["current_context"].pop("computed_json", None)
-                            
-                            update_result = {"success": False, "status": "declined"}
-                            
-                        except Exception as e:
-                            self.logger.error(f"❌ 거절 처리 중 오류: {e}", exc_info=True)
-                            log_hedge_event(
-                                user_id=user_id,
-                                event_type="ERROR",
-                                run_id=previous_run_id or run_id,
-                                source="SYSTEM",
-                                status="error",
-                                error_message=str(e),
-                            )
-                            answer += f"\n\n⚠️ 거절 처리 중 오류가 발생했습니다: {str(e)}"
-                            update_result = {"success": False, "error": str(e)}
-                
-                # (4) 자동 업데이트 모드 (auto_update=True)
-                elif auto_update:
-                    confirmed_ratio = w_H_star
-                    self.logger.info("🤖 자동 업데이트 모드: 계산된 헷지 비율 사용", {"hedge_ratio": confirmed_ratio})
-                    
-                    try:
-                        # user_usd(해외자산 총액) 가져오기
-                        total_overseas_usd = get_user_overseas_usd(user_id)
-                        
-                        # hedged_etf, unhedged_etf 계산
-                        hedged_etf = None
-                        unhedged_etf = None
-                        if total_overseas_usd is not None and w_H_star is not None:
-                            hedged_etf = round(total_overseas_usd * w_H_star, 2)
-                            unhedged_etf = round(total_overseas_usd * w_UH_star, 2)
-                            self.logger.info(
-                                "💰 ETF 금액 계산 완료",
-                                {
-                                    "total_overseas_usd": total_overseas_usd,
-                                    "hedged_etf": hedged_etf,
-                                    "unhedged_etf": unhedged_etf,
-                                }
-                            )
-                        
-                        # 계산 결과 JSON 준비
-                        computed_json = {
-                            "signal_score": signal_score,
-                            "expected_fx_return": expected_fx_return,
-                            "sigma_asset": sigma_asset,
-                            "sigma_fx": sigma_fx,
-                            "rho": rho,
-                            "risk_aversion": risk_aversion,
-                            "alpha": alpha,
-                            "w_H_star": w_H_star,
-                            "w_UH_star": w_UH_star,
-                            "total_overseas_usd": total_overseas_usd,
-                            "hedged_etf": hedged_etf,
-                            "unhedged_etf": unhedged_etf,
-                        }
-                        
-                        # RECOMMENDED 로그 (ETF 금액 포함)
-                        log_hedge_event(
-                            user_id=user_id,
-                            event_type="RECOMMENDED",
-                            run_id=run_id,
-                            source="MODEL",
-                            ratio=w_H_star,
-                            total_overseas_usd=total_overseas_usd,
-                            hedged_etf=hedged_etf,
-                            unhedged_etf=unhedged_etf,
-                            computed_json=computed_json,
-                        )
-                        
-                        # 트랜잭션으로 처리
-                        import pymysql
-                        import os
-                        import json
-                        from dotenv import load_dotenv
-                        
-                        load_dotenv()
-                        db_host = os.getenv("DATABASE_HOST") or os.getenv("DB_HOST")
-                        db_port = int(os.getenv("DATABASE_PORT") or os.getenv("DB_PORT", 3306))
-                        db_user = os.getenv("DATABASE_USER") or os.getenv("DB_USER")
-                        db_password = os.getenv("DATABASE_PASSWORD") or os.getenv("DB_PASSWORD")
-                        db_name = os.getenv("DATABASE_NAME") or os.getenv("DB_NAME")
-                        
-                        conn = pymysql.connect(
-                            host=db_host,
-                            port=db_port,
-                            user=db_user,
-                            password=db_password,
-                            database=db_name,
-                            charset="utf8mb4",
-                            cursorclass=pymysql.cursors.DictCursor,
-                        )
-                        
-                        try:
-                            cursor = conn.cursor()
-                            
-                            # 1) user_hedge_settings 업데이트 (ETF 금액 포함)
-                            cursor.execute(
-                                """
-                                INSERT INTO user_hedge_settings 
-                                (user_id, confirmed_hedge_ratio, hedge_mode, total_overseas_usd, hedged_etf, unhedged_etf)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                                ON DUPLICATE KEY UPDATE 
-                                    confirmed_hedge_ratio = VALUES(confirmed_hedge_ratio),
-                                    hedge_mode = VALUES(hedge_mode),
-                                    total_overseas_usd = VALUES(total_overseas_usd),
-                                    hedged_etf = VALUES(hedged_etf),
-                                    unhedged_etf = VALUES(unhedged_etf),
-                                    updated_at = CURRENT_TIMESTAMP
-                                """,
-                                (user_id, confirmed_ratio, "auto", total_overseas_usd, hedged_etf, unhedged_etf),
-                            )
-                            
-                            # 2) CONFIRMED 로그 (ETF 금액 포함)
-                            decision_json = {
-                                "choice": "auto",
-                                "final_ratio": confirmed_ratio,
-                                "hedged_etf": hedged_etf,
-                                "unhedged_etf": unhedged_etf,
-                            }
-                            
-                            cursor.execute(
-                                """
-                                INSERT INTO user_hedge_ratio_history 
-                                (user_id, event_type, ratio, source, run_id, total_overseas_usd, hedged_etf, unhedged_etf, computed_json, decision_json)
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                                """,
-                                (
-                                    user_id,
-                                    "CONFIRMED",
-                                    confirmed_ratio,
-                                    "SYSTEM",
-                                    run_id,
-                                    total_overseas_usd,
-                                    hedged_etf,
-                                    unhedged_etf,
-                                    json.dumps(computed_json),
-                                    json.dumps(decision_json),
-                                ),
-                            )
-                            
-                            conn.commit()
-                            
-                            # 결과 메시지에 ETF 금액 포함
-                            etf_info = ""
-                            if hedged_etf is not None and unhedged_etf is not None:
-                                etf_info = f"\n- 헷지 ETF: ${hedged_etf:,.2f}\n- 비헷지 ETF: ${unhedged_etf:,.2f}"
-                            
-                            answer += f"\n\n✅ 헷지 비율 자동 확정 완료:\n- 확정된 헷지 비율: {confirmed_ratio:.1%}{etf_info}\n- 설정이 업데이트되었습니다."
-                            update_result = {"success": True, "confirmed_ratio": confirmed_ratio, "hedged_etf": hedged_etf, "unhedged_etf": unhedged_etf}
-                            
-                        except Exception as e:
-                            conn.rollback()
-                            raise e
-                        finally:
-                            conn.close()
-                        
-                    except Exception as e:
-                        self.logger.error(f"❌ 자동 업데이트 처리 중 오류: {e}", exc_info=True)
-                        log_hedge_event(
-                            user_id=user_id,
-                            event_type="ERROR",
-                            run_id=run_id,
-                            source="SYSTEM",
-                            status="error",
-                            error_message=str(e),
-                        )
-                        answer += f"\n\n⚠️ 자동 업데이트 처리 중 오류가 발생했습니다: {str(e)}"
-                        update_result = {"success": False, "error": str(e)}
-            else:
-                # user_id가 없거나 w_H_star가 None인 경우 로그
-                if not user_id:
-                    self.logger.warning(
-                        "⚠️ user_id가 없어 헷지 비율 확정을 수행할 수 없습니다.",
-                        {"w_H_star": w_H_star}
-                    )
-                if w_H_star is None:
-                    self.logger.warning(
-                        "⚠️ w_H_star가 None이어서 헷지 비율 확정을 수행할 수 없습니다.",
-                        {"user_id": user_id}
-                    )
+
+            # Action 생성 (다른 agent가 이 결과를 찾을 수 있도록)
+            action = Action(
+                type="calculate",
+                tool="strategy_execute",
+                description=f"환헷지 전략 실행: 최적 헷지 비율 계산 완료",
+                input={
+                    "user_id": user_id,
+                    "signal_score": signal_score,
+                    "risk_aversion": risk_aversion,
+                    "alpha": alpha
+                },
+                output={
+                    "w_H_star": w_H_star,
+                    "w_UH_star": w_UH_star,
+                    "signal_score": signal_score,
+                    "expected_fx_return": expected_fx_return,
+                    "sigma_asset": sigma_asset,
+                    "sigma_fx": sigma_fx,
+                    "rho": rho,
+                    "risk_aversion": risk_aversion,
+                    "run_id": run_id
+                }
+            )
 
             result = {
                 "agent": self.name,
@@ -1030,9 +660,11 @@ class StrategyExecuteAgent(BaseAgent):
                 "w_H_star": w_H_star,
                 "w_UH_star": w_UH_star,
                 "confirmed_hedge_ratio": confirmed_ratio,
-                "hedge_update": update_result,
+                "hedge_update": None,  # DB 저장 제거됨
                 "run_id": run_id,
                 "status": "success",
+                "action": [action],  # Action 추가: 다른 agent가 찾을 수 있도록
+                "reference": []  # Reference는 없음
             }
 
             self.logger.info(
@@ -1040,8 +672,6 @@ class StrategyExecuteAgent(BaseAgent):
                 {
                     "w_H_star": w_H_star,
                     "w_UH_star": w_UH_star,
-                    "confirmed_ratio": confirmed_ratio,
-                    "update_success": update_result.get("success") if update_result else None,
                     "answer_length": len(answer)
                 }
             )

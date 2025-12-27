@@ -6,7 +6,7 @@ def fetch_news():
         "section": "general",
         "items": 3,
         "page": 1,
-        "token": "yyngfmqhyup8kqfze4rqg5sbcuiedbfzvsjwskpw"
+        "token": "5bzy7pu46uy9pascstk9sdbgkohmfzpxxwy5n1ia"
     }
 
     response = requests.get(url, params=params)

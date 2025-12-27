@@ -1,6 +1,7 @@
 """Tool 관련 유틸리티 (에러 처리, 스키마, decorator 통합)"""
 from typing import List, Dict, Any, Optional, Tuple, Callable, Union
 from functools import wraps
+from decimal import Decimal
 from src.utils.logger import get_logger
 
 logger = get_logger("tools-utils")
@@ -180,6 +181,34 @@ class UserInfoUpsertInput(BaseModel):
     user_usd: float = Field(
         description="미국 달러 자산 (USD 기준, 달러 단위)",
         examples=[100_000.0],
+    )
+    hedged_etf: Optional[Decimal] = Field(
+        default=None,
+        description="헷지된 ETF 금액 (USD 기준, 달러 단위). None이면 업데이트하지 않음",
+        examples=[Decimal("60000.00")],
+    )
+    unhedged_etf: Optional[Decimal] = Field(
+        default=None,
+        description="비헷지 ETF 금액 (USD 기준, 달러 단위). None이면 업데이트하지 않음",
+        examples=[Decimal("40000.00")],
+    )
+    date: Optional[str] = Field(
+        default=None,
+        description="날짜 (YYYY-MM-DD 형식). None이면 업데이트하지 않음",
+        examples=["2025-10-03"],
+    )
+
+
+class UserAssetLogGetInput(BaseModel):
+    """사용자 자산 로그 조회 입력 스키마"""
+    user_id: str = Field(
+        description="조회할 사용자 ID",
+        examples=["user_001"],
+    )
+    date: Optional[str] = Field(
+        default=None,
+        description="조회할 날짜 (YYYY-MM-DD 형식). None이면 최신 데이터 조회",
+        examples=["2025-10-01"],
     )
 
 

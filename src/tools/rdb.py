@@ -4,6 +4,7 @@ import json
 import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
+from decimal import Decimal
 from src.utils.settings import settings
 from src.utils.logger import get_logger
 from src.query.rdb_hard_queries import rdb_hard_queries
@@ -17,6 +18,7 @@ from src.utils.tools import (
     RDBGetLatestEcosDateInput,
     UserInfoGetInput,
     UserInfoUpsertInput,
+    UserAssetLogGetInput,
 )
 
 
@@ -865,7 +867,9 @@ async def user_info_get(user_id: str) -> Dict[str, Any]:
                     user_name,
                     user_krw,
                     user_usd,
-                    risk_level
+                    risk_level,
+                    hedged_etf,
+                    unhedged_etf
                 FROM user_info
                 WHERE user_id = %s
                 LIMIT 1
@@ -915,6 +919,9 @@ async def user_info_upsert(
     user_name: str,
     user_krw: float,
     user_usd: float,
+    hedged_etf: Optional[Decimal] = None,
+    unhedged_etf: Optional[Decimal] = None,
+    date: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     user_info 테이블에 사용자 정보를 입력/수정(Upsert)한다.
@@ -927,6 +934,9 @@ async def user_info_upsert(
         user_name: 사용자 이름
         user_krw: 한국 원화 자산 (KRW 기준, 원 단위)
         user_usd: 미국 달러 자산 (USD 기준, 달러 단위)
+        hedged_etf: 헷지된 ETF 금액 (USD 기준, 달러 단위, Decimal). None이면 업데이트하지 않음
+        unhedged_etf: 비헷지 ETF 금액 (USD 기준, 달러 단위, Decimal). None이면 업데이트하지 않음
+        date: 날짜 (YYYY-MM-DD 형식). None이면 업데이트하지 않음
 
     Returns:
         {
@@ -936,6 +946,11 @@ async def user_info_upsert(
           "user_info": {...}  # 최종 저장된 값
         }
     """
+    # Decimal로 변환 (float나 str이 들어올 수 있음)
+    if hedged_etf is not None and not isinstance(hedged_etf, Decimal):
+        hedged_etf = Decimal(str(hedged_etf))
+    if unhedged_etf is not None and not isinstance(unhedged_etf, Decimal):
+        unhedged_etf = Decimal(str(unhedged_etf))
     logger.info(
         "🔧 [TOOL CALL] user_info_upsert 실행",
         {
@@ -944,6 +959,9 @@ async def user_info_upsert(
             "user_name": user_name,
             "user_krw": user_krw,
             "user_usd": user_usd,
+            "hedged_etf": hedged_etf,
+            "unhedged_etf": unhedged_etf,
+            "date": date,
         },
     )
 
@@ -957,23 +975,34 @@ async def user_info_upsert(
             row = cursor.fetchone()
             exists = bool(row and row.get("cnt", 0) > 0)
 
+            # hedged_etf, unhedged_etf, date가 제공된 경우에만 포함
+            update_fields = ["user_name", "user_krw", "user_usd"]
+            update_values = [user_name, user_krw, user_usd]
+            
+            if hedged_etf is not None:
+                update_fields.append("hedged_etf")
+                update_values.append(hedged_etf)
+            if unhedged_etf is not None:
+                update_fields.append("unhedged_etf")
+                update_values.append(unhedged_etf)
+            if date is not None:
+                update_fields.append("date")
+                update_values.append(date)
+
             # Upsert 쿼리 (INSERT ... ON DUPLICATE KEY UPDATE)
-            sql = """
+            fields_str = ", ".join(update_fields)
+            placeholders = ", ".join(["%s"] * len(update_fields))
+            update_clause = ", ".join([f"{field} = VALUES({field})" for field in update_fields])
+            
+            sql = f"""
                 INSERT INTO user_info (
-                    user_id, user_name, user_krw, user_usd
-                ) VALUES (%s, %s, %s, %s)
+                    user_id, {fields_str}
+                ) VALUES (%s, {placeholders})
                 ON DUPLICATE KEY UPDATE
-                    user_name = VALUES(user_name),
-                    user_krw = VALUES(user_krw),
-                    user_usd = VALUES(user_usd)
+                    {update_clause}
             """
 
-            params = (
-                user_id,
-                user_name,
-                user_krw,
-                user_usd,
-            )
+            params = (user_id,) + tuple(update_values)
 
             logger.info(
                 "📝 [QUERY] 사용자 정보 Upsert 실행",
@@ -992,7 +1021,9 @@ async def user_info_upsert(
                     user_name,
                     user_krw,
                     user_usd,
-                    risk_level
+                    risk_level,
+                    hedged_etf,
+                    unhedged_etf
                 FROM user_info
                 WHERE user_id = %s
                 LIMIT 1
@@ -1033,3 +1064,107 @@ async def user_info_upsert(
             exc_info=True,
         )
         raise ToolError("user_info_upsert", f"사용자 정보 Upsert 실패: {str(e)}", e)
+
+
+@tool(args_schema=UserAssetLogGetInput)
+@handle_tool_error("user_asset_log_get")
+async def user_asset_log_get(user_id: str, date: Optional[str] = None) -> Dict[str, Any]:
+    """
+    user_asset_log 테이블에서 특정 사용자의 자산 로그를 조회한다.
+    
+    Args:
+        user_id: 조회할 사용자 ID
+        date: 조회할 날짜 (YYYY-MM-DD 형식). None이면 최신 데이터 조회
+    
+    Returns:
+        {
+          "status": "success",
+          "found": bool,
+          "asset_log": {...}  # 찾은 경우에만
+        }
+    """
+    logger.info(
+        "🔧 [TOOL CALL] user_asset_log_get 실행",
+        {"tool_name": "user_asset_log_get", "user_id": user_id, "date": date},
+    )
+    
+    conn = _db_connection._get_connection()
+    
+    try:
+        with conn.cursor() as cursor:
+            if date:
+                # 특정 날짜 조회
+                sql = """
+                    SELECT 
+                        id,
+                        user_id,
+                        date,
+                        hedged_etf,
+                        unhedged_etf,
+                        fx_rate,
+                        fx_return,
+                        created_at
+                    FROM user_asset_log
+                    WHERE user_id = %s AND date = %s
+                    ORDER BY date DESC, created_at DESC
+                    LIMIT 1
+                """
+                logger.info(
+                    "📝 [QUERY] 사용자 자산 로그 조회 (특정 날짜)",
+                    {"sql": sql.strip(), "user_id": user_id, "date": date},
+                )
+                cursor.execute(sql, (user_id, date))
+            else:
+                # 최신 데이터 조회
+                sql = """
+                    SELECT 
+                        id,
+                        user_id,
+                        date,
+                        hedged_etf,
+                        unhedged_etf,
+                        fx_rate,
+                        fx_return,
+                        created_at
+                    FROM user_asset_log
+                    WHERE user_id = %s
+                    ORDER BY date DESC, created_at DESC
+                    LIMIT 1
+                """
+                logger.info(
+                    "📝 [QUERY] 사용자 자산 로그 조회 (최신)",
+                    {"sql": sql.strip(), "user_id": user_id},
+                )
+                cursor.execute(sql, (user_id,))
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                logger.info(
+                    "ℹ️ [TOOL RESULT] user_asset_log_get - 자산 로그 없음",
+                    {"user_id": user_id, "date": date},
+                )
+                return {
+                    "status": "success",
+                    "found": False,
+                    "asset_log": None,
+                    "message": f"사용자 ID '{user_id}'의 자산 로그를 찾을 수 없습니다." + (f" (날짜: {date})" if date else ""),
+                }
+            
+            asset_log = dict(row)
+            logger.info(
+                "✅ [TOOL RESULT] user_asset_log_get 완료",
+                {"user_id": user_id, "date": date, "asset_log_preview": asset_log},
+            )
+            return {
+                "status": "success",
+                "found": True,
+                "asset_log": asset_log,
+            }
+    except Exception as e:
+        logger.error(
+            "❌ user_asset_log_get 실패",
+            {"user_id": user_id, "date": date, "error": str(e)},
+            exc_info=True,
+        )
+        raise ToolError("user_asset_log_get", f"사용자 자산 로그 조회 실패: {str(e)}", e)

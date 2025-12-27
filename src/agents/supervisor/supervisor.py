@@ -7,6 +7,7 @@ from src.utils.settings import settings
 from src.agents.market_information_agent import MarketInformationAgent
 from src.agents.expert_information_agent import ExpertInformationAgent
 from src.agents.user_information_agent import UserInformationAgent
+from src.agents.strategy_execute_agent import StrategyExecuteAgent
 from src.agents.reask_agent import ReAskAgent
 from src.agents.react_agent import ReActAgent
 from src.agents.handsoff_agent import HandsOffAgent
@@ -14,6 +15,7 @@ from src.prompts.supervisor_routing import SUPERVISOR_ROUTING_SYSTEM_PROMPT, SUP
 from src.prompts.market_information_routing import MARKET_INFORMATION_ROUTING
 from src.prompts.expert_information_routing import EXPERT_INFORMATION_ROUTING
 from src.prompts.user_information_routing import USER_INFORMATION_ROUTING
+from src.prompts.strategy_execute_routing import STRATEGY_EXECUTE_ROUTING
 from src.utils.logger import get_logger
 from src.utils.llm import LANGCHAIN_OPENAI_AVAILABLE, convert_dict_messages_to_langchain
 from src.utils.state import AgentState, AdditionalInfo, Reference, Action
@@ -93,6 +95,7 @@ class Supervisor:
             "market_information": MarketInformationAgent(),
             "expert_information": ExpertInformationAgent(),
             "user_information": UserInformationAgent(),
+            "strategy_execute": StrategyExecuteAgent(),
             "reask": ReAskAgent(),
             "react": ReActAgent(),
             "handsoff": HandsOffAgent()
@@ -102,7 +105,8 @@ class Supervisor:
         self.agent_descriptions = (
             f"{MARKET_INFORMATION_ROUTING}\n\n"
             f"{EXPERT_INFORMATION_ROUTING}\n\n"
-            f"{USER_INFORMATION_ROUTING}"
+            f"{USER_INFORMATION_ROUTING}\n\n"
+            f"{STRATEGY_EXECUTE_ROUTING}"
         )
         
         # LangGraph 그래프 구성

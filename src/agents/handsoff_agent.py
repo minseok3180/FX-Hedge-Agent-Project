@@ -70,11 +70,31 @@ class HandsOffAgent(BaseAgent):
             # 수집된 데이터 및 컨텍스트 포함
             user_content = f"사용자 질문: {user_query}\n\n"
             
-            if collected_data:
-                user_content += f"수집된 데이터:\n{self._format_data(collected_data)}\n\n"
+            try:
+                if collected_data:
+                    formatted_data = self._format_data(collected_data)
+                    user_content += f"수집된 데이터:\n{formatted_data}\n\n"
+            except Exception as e:
+                self.logger.warning(
+                    f"⚠️ 수집된 데이터 포맷팅 실패, 생략",
+                    {"error": str(e), "error_type": type(e).__name__}
+                )
             
-            if context:
-                user_content += f"추가 컨텍스트:\n{self._format_context(context)}\n\n"
+            try:
+                if context:
+                    # context에서 state 같은 큰 객체는 제외하고 필수 정보만 포함
+                    context_summary = {
+                        "user_id": context.get("user_id"),
+                        "date": context.get("date"),
+                        "collected_data_keys": list(context.get("collected_data", {}).keys()) if isinstance(context.get("collected_data"), dict) else None,
+                    }
+                    formatted_context = self._format_context(context_summary)
+                    user_content += f"추가 컨텍스트:\n{formatted_context}\n\n"
+            except Exception as e:
+                self.logger.warning(
+                    f"⚠️ 컨텍스트 포맷팅 실패, 생략",
+                    {"error": str(e), "error_type": type(e).__name__}
+                )
             
             user_content += "위 정보를 바탕으로 직접 답변할지 Supervisor에게 넘길지 결정하세요."
             
@@ -116,9 +136,20 @@ class HandsOffAgent(BaseAgent):
             }
             
         except Exception as e:
+            error_type = type(e).__name__
+            error_msg = str(e)
+            
             self.logger.error(
                 f"❌ Hands-off 결정 실패",
-                {"error": str(e)},
+                {
+                    "error": error_msg,
+                    "error_type": error_type,
+                    "user_query": user_query[:100] if user_query else None,
+                    "has_collected_data": collected_data is not None,
+                    "has_context": context is not None,
+                    "collected_data_keys": list(collected_data.keys()) if isinstance(collected_data, dict) else None,
+                    "context_keys": list(context.keys()) if isinstance(context, dict) else None,
+                },
                 exc_info=True
             )
             return {
@@ -126,21 +157,73 @@ class HandsOffAgent(BaseAgent):
                 "decision": "handsoff",
                 "reasoning": "",
                 "answer": "",
-                "handoff_reason": f"에러 발생: {str(e)}",
+                "handoff_reason": f"에러 발생 ({error_type}): {error_msg}",
                 "required_agents": [],
-                "error": str(e),
+                "error": error_msg,
+                "error_type": error_type,
                 "status": "error"
             }
     
     def _format_data(self, data: Dict[str, Any]) -> str:
         """데이터를 문자열로 포맷팅"""
         import json
-        return json.dumps(data, ensure_ascii=False, indent=2)
+        try:
+            # JSON 직렬화 가능한 객체만 추출
+            serializable_data = self._make_serializable(data)
+            return json.dumps(serializable_data, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.warning(
+                f"⚠️ 데이터 포맷팅 실패, 간단한 요약으로 대체",
+                {"error": str(e)}
+            )
+            # 실패 시 간단한 요약만 반환
+            return f"수집된 데이터 키: {list(data.keys()) if isinstance(data, dict) else 'N/A'}"
     
     def _format_context(self, context: Dict[str, Any]) -> str:
         """컨텍스트를 문자열로 포맷팅"""
         import json
-        return json.dumps(context, ensure_ascii=False, indent=2)
+        try:
+            # JSON 직렬화 가능한 객체만 추출
+            serializable_context = self._make_serializable(context)
+            return json.dumps(serializable_context, ensure_ascii=False, indent=2)
+        except Exception as e:
+            self.logger.warning(
+                f"⚠️ 컨텍스트 포맷팅 실패, 간단한 요약으로 대체",
+                {"error": str(e)}
+            )
+            # 실패 시 간단한 요약만 반환
+            return f"컨텍스트 키: {list(context.keys()) if isinstance(context, dict) else 'N/A'}"
+    
+    def _make_serializable(self, obj: Any) -> Any:
+        """객체를 JSON 직렬화 가능한 형태로 변환"""
+        import json
+        from datetime import datetime, date
+        from decimal import Decimal
+        
+        if obj is None:
+            return None
+        elif isinstance(obj, (str, int, float, bool)):
+            return obj
+        elif isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        elif isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, dict):
+            return {k: self._make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [self._make_serializable(item) for item in obj]
+        elif isinstance(obj, type):
+            # type 객체는 문자열로 변환
+            return str(obj)
+        elif hasattr(obj, '__dict__') and not isinstance(obj, dict):
+            # 객체인 경우 __dict__만 추출 (dict는 이미 위에서 처리됨)
+            try:
+                return self._make_serializable(obj.__dict__)
+            except Exception:
+                return str(obj)
+        else:
+            # 그 외의 경우 문자열로 변환
+            return str(obj)
     
     async def execute(self, task: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """

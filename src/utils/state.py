@@ -60,6 +60,23 @@ def create_reference_and_action_from_tool_result(
             results_count = len(tool_result["results"])
         elif "data" in tool_result and isinstance(tool_result["data"], list):
             results_count = len(tool_result["data"])
+        elif "user_info" in tool_result:
+            # user_info_get 같은 경우: user_info가 있으면 1개 결과
+            user_info_value = tool_result.get("user_info")
+            if user_info_value is not None:
+                results_count = 1
+            elif tool_result.get("found", False):
+                # found=True인데 user_info가 None이면 0 (데이터 없음)
+                results_count = 0
+            else:
+                results_count = 0
+        elif "found" in tool_result:
+            # found 키가 있는 경우 (user_info_get, user_info_upsert 등)
+            found_value = tool_result.get("found")
+            if found_value is True or (isinstance(found_value, str) and found_value.lower() == "true"):
+                results_count = 1
+            else:
+                results_count = 0
         else:
             results_count = 0
     else:
