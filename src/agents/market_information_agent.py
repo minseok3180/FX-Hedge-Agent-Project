@@ -868,6 +868,9 @@ class MarketInformationAgent(BaseAgent):
 ### 기본값 규칙
 1. **날짜 관련**:
    - "오늘", "현재", "지금" 등의 단어가 있으면 → 오늘 날짜({today_date}) 사용
+   - **요청 바디나 state에 date가 주어져 있고**, 질문에 "최근", "지난", "일주일" 등의 표현이 있으면
+     → 해당 date를 기준으로 상대 기간을 계산 (예: date가 2025-11-24이고 "최근 일주일"이면
+        2025-11-18 ~ 2025-11-24 구간을 get_by_range로 조회)
    - 날짜가 명시되지 않았지만 환율/경제지표 조회인 경우 → "get_latest" 사용 (최신 데이터)
    - "어제", "지난주" 등 상대적 표현도 기본값으로 처리
 
@@ -883,7 +886,7 @@ class MarketInformationAgent(BaseAgent):
    - 복잡한 조건이 있으면 → "rdb_llm"
 
 ### 추론된 기본값
-{json.dumps(inferred_defaults, ensure_ascii=False, indent=2) if inferred_defaults else '없음'}
+{json.dumps(inferred_defaults, ensure_ascii=False, indent=2, default=str) if inferred_defaults else '없음'}
 
 사용 가능한 쿼리:
 - get_by_date: 특정 날짜의 환율 및 경제 지표 조회
@@ -900,7 +903,7 @@ class MarketInformationAgent(BaseAgent):
 오늘 날짜: {today_date}
 
 이전 에이전트가 수집한 데이터:
-{json.dumps(previous_collected_data, ensure_ascii=False, indent=2) if previous_collected_data else '없음'}
+{json.dumps(previous_collected_data, ensure_ascii=False, indent=2, default=str) if previous_collected_data else '없음'}
 """
         
         user_prompt = f"""사용자 질문: {user_query}
@@ -912,7 +915,7 @@ class MarketInformationAgent(BaseAgent):
    - 날짜가 없으면 → "get_latest" 사용
 
 2. **추론된 기본값 활용**: 위에서 추론된 기본값을 적극 활용하세요.
-{json.dumps(inferred_defaults, ensure_ascii=False, indent=2) if inferred_defaults else '추론된 기본값 없음'}
+{json.dumps(inferred_defaults, ensure_ascii=False, indent=2, default=str) if inferred_defaults else '추론된 기본값 없음'}
 
 3. **이전 데이터 활용**: 이전 에이전트가 수집한 데이터가 있다면 이를 활용하여 추가로 필요한 데이터만 조회하세요.
 
@@ -1106,7 +1109,7 @@ class MarketInformationAgent(BaseAgent):
         if collected_data.get("exchange_rate"):
             data = collected_data["exchange_rate"]
             if isinstance(data, list) and len(data) > 0:
-                data_summary_parts.append(f"RDB 데이터:\n{json.dumps(data, ensure_ascii=False, indent=2)}")
+                data_summary_parts.append(f"RDB 데이터:\n{json.dumps(data, ensure_ascii=False, indent=2, default=str)}")
             else:
                 data_summary_parts.append("RDB 데이터: 없음 (해당 날짜의 데이터를 찾을 수 없습니다)")
         elif collected_data.get("error"):

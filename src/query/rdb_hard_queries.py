@@ -7,6 +7,9 @@ Placeholder 지원:
 사용 예시:
 - Placeholder 사용: WHERE date = '{date}' → state에서 date 값으로 자동 치환
 - 파라미터 바인딩: WHERE date = %s → execute() 호출 시 params로 전달
+
+안녕하세요
+
 """
 
 rdb_hard_queries = {
@@ -14,6 +17,9 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix,
             미국수출금액, 
             미국수입금액, 
             외환보유액, 
@@ -31,7 +37,10 @@ rdb_hard_queries = {
             주가지수, 
             미국주가지수, 
             한국금리, 
-            미국금리
+            미국금리,
+            SPY_close,
+            VIX,
+            DXY
         FROM eiExchangeRate
         WHERE date = '{date}'
         ORDER BY date DESC
@@ -42,6 +51,9 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix,
             미국수출금액, 
             미국수입금액, 
             외환보유액, 
@@ -59,7 +71,10 @@ rdb_hard_queries = {
             주가지수, 
             미국주가지수, 
             한국금리, 
-            미국금리
+            미국금리,
+            SPY_close,
+            VIX,
+            DXY
         FROM eiExchangeRate
         WHERE date BETWEEN %s AND %s
         ORDER BY date DESC
@@ -70,6 +85,9 @@ rdb_hard_queries = {
         SELECT 
             date, 
             usdkrw, 
+            -- [임시조치] 실제 컬럼 생기기 전까지 NULL로 자리만 잡아둠
+            NULL as dxy,  
+            NULL as vix,
             미국수출금액, 
             미국수입금액, 
             외환보유액, 
@@ -87,7 +105,10 @@ rdb_hard_queries = {
             주가지수, 
             미국주가지수, 
             한국금리, 
-            미국금리
+            미국금리,
+            SPY_close,
+            VIX,
+            DXY
         FROM eiExchangeRate
         ORDER BY date DESC
         LIMIT %s
@@ -104,12 +125,10 @@ rdb_hard_queries = {
     "get_user_info_by_id": """
         SELECT 
             user_id,
-            name,
-            age,
-            gender,
-            total_assets,
-            overseas_assets,
-            risk_profile
+            user_name,
+            user_krw,
+            user_usd,
+            risk_level
         FROM user_info
         WHERE user_id = '{user_id}'
         LIMIT 1
@@ -118,12 +137,10 @@ rdb_hard_queries = {
     "get_all_users": """
         SELECT 
             user_id,
-            name,
-            age,
-            gender,
-            total_assets,
-            overseas_assets,
-            risk_profile
+            user_name,
+            user_krw,
+            user_usd,
+            risk_level
         FROM user_info
     """,
 }

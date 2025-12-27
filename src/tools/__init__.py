@@ -46,7 +46,7 @@ from .calculator import (
 # ============================================================================
 from .rdb import (
     rdb_modify,
-    _db_connection,  # ecos.py 등에서 재사용
+    _db_connection,  # 스크립트 등에서 재사용
 )
 # vdb는 optional dependency이므로 lazy import
 try:
@@ -133,12 +133,6 @@ __all__ = [
     "vdb_create_collection",
     "vdb_upsert_points",
     "_get_qdrant_client",
-    # ECOS ETL
-    "run_ecos_pipeline",
-    "upload_ecos_to_db",
-    # 문서 인제스트
-    "ingest_documents",
-    
     # ========== 유틸리티 ==========
     "tool",
     "get_all_tools",
