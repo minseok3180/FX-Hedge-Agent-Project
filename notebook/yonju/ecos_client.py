@@ -14,7 +14,7 @@ class EcosError(RuntimeError):
     pass
 
 def _get_api_key() -> str:
-    key = os.environ.get("ECOS_API_KEY", "39X0Z0PK0AU0B8JTWX2G").strip()
+    key = os.environ.get("ECOS_API_KEY").strip()
     if not key:
         raise EcosError("환경변수 ECOS_API_KEY가 설정되어 있지 않습니다.")
     return key
